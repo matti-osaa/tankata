@@ -1,0 +1,12 @@
+{
+  "name": "kuokkanen-pumpulla",
+  "version": "1.0.0",
+  "description": "Tankkauksen kustannusoptimoija",
+  "main": "tankkaus.js",
+  "scripts": {
+    "start": "node tankkaus.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
