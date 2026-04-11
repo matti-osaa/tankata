@@ -1333,7 +1333,10 @@ async function run(){
 // RENDER RESULTS
 // ═══════════════════════════════════════════════════
 function renderResults(stations,{fillL,range,fuelKey}){
-  document.getElementById('res').style.display='block';
+  const resEl=document.getElementById('res');
+  resEl.style.display='block';
+  // Scrollaa tuloksiin automaattisesti mobiililla
+  setTimeout(()=>resEl.scrollIntoView({behavior:'smooth',block:'start'}),80);
   const fl={p95:'95E10',p98:'98E5',diesel:'Diesel'}[fuelKey];
   const best=stations[0];
   const cheapest=[...stations].sort((a,b)=>a.price-b.price)[0];
