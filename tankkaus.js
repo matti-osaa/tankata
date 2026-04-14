@@ -261,6 +261,10 @@ const server = http.createServer(async (req, res) => {
 
       const data = await scrapePolttoaine({ region, city, cmd });
       data.fetchedAt = new Date().toISOString();
+      // Estä selaimen välimuisti — hinnat muuttuvat jatkuvasti
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
       res.writeHead(200);
       const json = JSON.stringify({ ok: true, ...data });
       res.end(Buffer.from(json, 'utf8'));
@@ -1150,7 +1154,7 @@ async function loadPrices(manual=false){
   log(T('fetching'));
   loader(true,T('fetching'));
   try{
-    const r=await fetch(url);
+    const r=await fetch(url,{cache:'no-store'});
     const d=await r.json();
     if(!d.ok) throw new Error(d.error||'server error');
     ST.stations=d.stations; ST.fetchedAt=d.fetchedAt;
