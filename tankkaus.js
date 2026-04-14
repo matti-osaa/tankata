@@ -840,7 +840,7 @@ const LANGS = {
     afterDetour:'€ kiertotien jälkeen',
     totalCostLbl:'Kokonaiskulu',tankCostLbl:'Tankkauskulu',detourCostLbl:'Kiertotiepolttoainekulu',netSavingLbl:'Nettosäästö',
     badgeOptimal:'OPTIMAALISIN',badgeGood:'HYVÄ',badgeMarg:'MARGINAALINEN',badgeBad:'EI KANNATA',
-    crowKm:'km linnuntietä',roadKm:'km tie',
+    crowKm:'km linnuntietä',roadKm:'km tieverkko',roundTrip:'edestakainen',extraTime:'lisäaikaa',estLabel:'arvio',
     fillWord:'täytä',gross:'bruttosäästö',detour:'kiertotie',net:'netto',
     noStations:'Ei asemia — tarkista suodattimet tai laajenna hakua.',
     noData:'Ei dataa — onko palvelin käynnissä?',
@@ -878,7 +878,7 @@ const LANGS = {
     afterDetour:'€ efter omväg',
     totalCostLbl:'Totalkostnad',tankCostLbl:'Tankningskostnad',detourCostLbl:'Omvägsbränsle',netSavingLbl:'Nettobesparing',
     badgeOptimal:'OPTIMAL',badgeGood:'BRA',badgeMarg:'MARGINELL',badgeBad:'LÖNAR SIG EJ',
-    crowKm:'km fågelväg',roadKm:'km väg',
+    crowKm:'km fågelväg',roadKm:'km vägnät',roundTrip:'tur-retur',extraTime:'extra tid',estLabel:'uppskattning',
     fillWord:'fyll',gross:'bruttobesparing',detour:'omväg',net:'netto',
     noStations:'Inga stationer — justera filter.',
     noData:'Ingen data — körs servern?',
@@ -915,7 +915,7 @@ const LANGS = {
     afterDetour:'€ after detour',
     totalCostLbl:'Total cost',tankCostLbl:'Fuel cost',detourCostLbl:'Detour fuel cost',netSavingLbl:'Net saving',
     badgeOptimal:'OPTIMAL',badgeGood:'GOOD',badgeMarg:'MARGINAL',badgeBad:'NOT WORTH IT',
-    crowKm:'km as the crow flies',roadKm:'km road',
+    crowKm:'km as the crow flies',roadKm:'km road',roundTrip:'round trip',extraTime:'extra time',estLabel:'estimate',
     fillWord:'fill',gross:'gross saving',detour:'detour',net:'net',
     noStations:'No stations — adjust filters.',
     noData:'No data — is the server running?',
@@ -1178,6 +1178,14 @@ function hav(a,b,c,d){
   return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));
 }
 function roadEst(sl){return sl*(sl<5?1.45:sl<15?1.35:1.22);}
+// Karkea aika-arvio: ~40 km/h kaupunki, ~60 km/h taajama, ~80 km/h maantie + 3 min tankkaus
+function etaStr(km){
+  const avgSpeed=km<5?30:km<15?40:km<30?55:70; // km/h — varovaisempi arvio
+  const mins=Math.round(km/avgSpeed*60)+3; // +3 min tankkaus+kävely
+  if(mins<60) return mins+' min';
+  const h=Math.floor(mins/60), m=mins%60;
+  return h+'h'+(m?(' '+m+'min'):'');
+}
 function ptSeg(px,py,ax,ay,bx,by){
   const dx=bx-ax,dy=by-ay,l2=dx*dx+dy*dy;
   if(!l2)return hav(py,px,ay,ax);
@@ -1306,7 +1314,7 @@ async function run(){
     const totalCost=tankCost+dCost;
     // #5: pisteytysfunktio penalisoi pitkiä kiertoteitä pehmeästi
     const score=net/(1+extra);
-    const distSrc=rdists?.[i]!=null?'tie':'linnuntie';
+    const distSrc=rdists?.[i]!=null?'osrm':'est';
     return{...s,price,sl,detour,extra,gross,dCost,net,score,tankCost,totalCost,distSrc};
   })
   // #4: karsitaan alle kynnyksen olevat (ellei kaikki alle — otetaan silti paras)
@@ -1376,8 +1384,11 @@ function renderResults(stations,{fillL,range,fuelKey}){
           '</div>'+
           '<div style="font-size:.73em;color:var(--m2);margin-bottom:4px">'+((s.name||'').slice(0,55))+'</div>'+
           '<div class="cm">'+
-            '<span>· '+s.sl.toFixed(1)+' '+T('crowKm')+'</span>'+
-            '<span>· '+(ST.dest?s.detour.toFixed(1)+' '+T('roadKm'):(s.detour*2).toFixed(1)+' '+T('roadKm'))+' ('+s.distSrc+(ST.dest?'':' edestakainen')+')</span>'+
+            '<span>· '+s.detour.toFixed(1)+' '+T('roadKm')+
+              (s.distSrc==='osrm'?'':' ('+T('estLabel')+')')+
+              (ST.dest?'':' · '+(s.detour*2).toFixed(1)+' '+T('roundTrip'))+
+            '</span>'+
+            '<span>· ~'+etaStr(ST.dest?s.extra:s.detour*2)+' '+T('extraTime')+'</span>'+
             '<span style="color:'+updColor(s,fuelKey)+'">· '+updAge(s,fuelKey)+'</span>'+
           '</div>'+
         '</div>'+
