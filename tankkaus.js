@@ -1493,6 +1493,10 @@ function drawMap(origin, dest, stations, forceZoom, panX, panY){
   ctx.fillStyle=isDark?'#1a1d1a':'#e8e8e8';
   ctx.fillRect(0,0,c.width,c.height);
 
+  // Piirrä overlay heti "esikatseluna" ennen kuin tiilet latautuvat —
+  // näin kartta ei ole musta odotellessa
+  drawOverlay();
+
   // Load and draw OSM tiles
   // Use both light and dark-friendly tile servers
   const tileUrl = isDark
