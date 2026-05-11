@@ -498,6 +498,19 @@ input[type=range]{padding:0;height:3px;accent-color:var(--acc);cursor:pointer}
 .hist-fuel{color:var(--acc);min-width:60px}
 .hist-prices{color:var(--txt);flex:1}
 .hist-del{cursor:pointer;color:var(--bad);padding:2px 6px;border-radius:2px}
+/* ── PRICES TAB ── */
+.pc-controls{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px;align-items:flex-end}
+.pc-controls .fg{min-width:130px;flex:1}
+.pc-station-list{margin-top:10px;max-height:220px;overflow-y:auto;border:1px solid var(--b1);border-radius:2px}
+.pc-station-row{display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid var(--b1);font-family:'DM Mono',monospace;font-size:.72em;cursor:pointer;flex-wrap:wrap}
+.pc-station-row:last-child{border-bottom:none}
+.pc-station-row:hover{background:var(--s2)}
+.pc-station-row.selected{background:color-mix(in srgb,var(--acc) 12%,transparent);border-left:2px solid var(--acc)}
+.pc-station-brand{color:var(--acc);min-width:70px;font-weight:500}
+.pc-station-city{color:var(--m2);min-width:70px}
+.pc-fuel-badge{font-family:'Bebas Neue',sans-serif;font-size:1.1em;margin-left:6px}
+.pc-chart-wrap{background:var(--s1);border:1px solid var(--b1);border-radius:3px;padding:16px;margin-bottom:14px}
+.pc-chart-wrap canvas{max-height:380px}
 .hist-del:hover{background:color-mix(in srgb,var(--bad) 15%,transparent)}
 .cost-formula{font-family:'DM Mono',monospace;font-size:.6em;color:var(--m2);margin-top:3px;letter-spacing:.3px}
 .card-best-highlight{border-color:var(--acc)!important;border-width:2px!important;
@@ -552,8 +565,9 @@ input[type=range]{padding:0;height:3px;accent-color:var(--acc);cursor:pointer}
 
 <!-- TABS -->
 <div class="tabs">
-  <button class="tab active" id="tab-search" onclick="showTab('search')" id="t-tab-search">Haku</button>
-  <button class="tab" id="tab-history" onclick="showTab('history')" id="t-tab-hist">Historia</button>
+  <button class="tab active" id="tab-search" onclick="showTab('search')">Haku</button>
+  <button class="tab" id="tab-prices" onclick="showTab('prices')">Hinnat</button>
+  <button class="tab" id="tab-history" onclick="showTab('history')">Historia</button>
 </div>
 
 <!-- SEARCH TAB -->
@@ -789,6 +803,67 @@ input[type=range]{padding:0;height:3px;accent-color:var(--acc);cursor:pointer}
   <div id="hist-content"></div>
 </div>
 
+<!-- PRICES TAB -->
+<div class="tabpanel" id="panel-prices">
+  <div class="pc-controls">
+    <div class="fg">
+      <label id="t-pc-fuel-lbl">Polttoaine</label>
+      <select id="pc-fuel" onchange="renderPriceChart()">
+        <option value="p95" selected>95E10</option>
+        <option value="p98">98E5</option>
+        <option value="diesel">Diesel</option>
+        <option value="all">Kaikki laadut</option>
+      </select>
+    </div>
+    <div class="fg">
+      <label id="t-pc-view-lbl">Näytä</label>
+      <select id="pc-view" onchange="onPcViewChange()">
+        <option value="curve">Hintakäyrä — kaikki asemat</option>
+        <option value="region">Alueittain</option>
+        <option value="city">Kaupungissa</option>
+        <option value="station">Asemahaku</option>
+      </select>
+    </div>
+    <div class="fg" id="pc-region-wrap">
+      <label>Alue</label>
+      <select id="pc-region" onchange="renderPriceChart()">
+        <option value="">— kaikki —</option>
+        <option value="PK-Seutu">PK-Seutu</option>
+        <option value="Turun_seutu">Turun seutu</option>
+        <option value="Tampereen_seutu">Tampereen seutu</option>
+        <option value="Lahden_seutu">Lahden seutu</option>
+        <option value="Oulun_seutu">Oulun seutu</option>
+        <option value="Jyva_skyla_n_seutu">Jyväskylän seutu</option>
+        <option value="Lappeenrannan_seutu">Lappeenrannan seutu</option>
+        <option value="Kuopion_seutu">Kuopion seutu</option>
+        <option value="Joensuun_seutu">Joensuun seutu</option>
+        <option value="Kouvolan_seutu">Kouvolan seutu</option>
+        <option value="Mikkelin_seutu">Mikkelin seutu</option>
+        <option value="Rovaniemen_seutu">Rovaniemen seutu</option>
+        <option value="Vaasan_seutu">Vaasan seutu</option>
+        <option value="Hameenlinnan_seutu">Hämeenlinnan seutu</option>
+        <option value="Porin_seutu">Porin seutu</option>
+        <option value="Seina_joen_seutu">Seinäjoen seutu</option>
+      </select>
+    </div>
+    <div class="fg" id="pc-city-wrap" style="display:none">
+      <label>Kaupunki</label>
+      <input id="pc-city" type="text" placeholder="esim. Tampere" oninput="renderPriceChart()">
+    </div>
+    <div class="fg" id="pc-station-wrap" style="display:none">
+      <label>Hae asemaa</label>
+      <input id="pc-station-search" type="text" placeholder="esim. ABC, Neste, Tampere…" oninput="pcStationSearch()">
+    </div>
+    <button class="btn sec" style="width:auto;padding:8px 16px;align-self:flex-end" onclick="initPriceTab()">↻ Päivitä</button>
+  </div>
+  <div class="pc-chart-wrap">
+    <div class="chart-title" id="pc-chart-title">Hintakäyrä</div>
+    <canvas id="pc-chart"></canvas>
+  </div>
+  <div id="pc-station-list" class="pc-station-list" style="display:none"></div>
+  <div id="pc-stats" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px"></div>
+</div>
+
 <div class="disc" id="t-disc"></div>
 </div>
 
@@ -844,7 +919,10 @@ const LANGS = {
     fillWord:'täytä',gross:'bruttosäästö',detour:'kiertotie',net:'netto',
     noStations:'Ei asemia — tarkista suodattimet tai laajenna hakua.',
     noData:'Ei dataa — onko palvelin käynnissä?',
-    tabSearch:'Haku',tabHistory:'Historia',
+    tabSearch:'Haku',tabHistory:'Historia',tabPrices:'Hinnat',
+    pcCurve:'Hintakäyrä — kaikki asemat',pcRegion:'Alueittain',pcCity:'Kaupungissa',pcStation:'Asemahaku',
+    pcFuelLbl:'Polttoaine',pcViewLbl:'Näytä',pcAllFuels:'Kaikki laadut',
+    pcMin:'Halvin',pcMax:'Kallein',pcAvg:'Keskiarvo',pcSpread:'Hajonta',
     histEmpty:'Ei hakuhistoriaa. Tee haku ensin.',
     histTitle:'Hakuhistoria',histWeekTitle:'Hinnat viikonpäivittäin (ka.)',
     histTimeTitle:'Hintojen kehitys',
@@ -882,7 +960,10 @@ const LANGS = {
     fillWord:'fyll',gross:'bruttobesparing',detour:'omväg',net:'netto',
     noStations:'Inga stationer — justera filter.',
     noData:'Ingen data — körs servern?',
-    tabSearch:'Sök',tabHistory:'Historik',
+    tabSearch:'Sök',tabHistory:'Historik',tabPrices:'Priser',
+    pcCurve:'Priskurva — alla stationer',pcRegion:'Per region',pcCity:'I stad',pcStation:'Stationssök',
+    pcFuelLbl:'Bränsle',pcViewLbl:'Visa',pcAllFuels:'Alla typer',
+    pcMin:'Billigast',pcMax:'Dyrast',pcAvg:'Medel',pcSpread:'Spridning',
     histEmpty:'Ingen sökhistorik ännu.',
     histTitle:'Sökhistorik',histWeekTitle:'Priser per veckodag (medel)',
     histTimeTitle:'Prisutveckling',histClear:'Rensa historik',
@@ -919,7 +1000,10 @@ const LANGS = {
     fillWord:'fill',gross:'gross saving',detour:'detour',net:'net',
     noStations:'No stations — adjust filters.',
     noData:'No data — is the server running?',
-    tabSearch:'Search',tabHistory:'History',
+    tabSearch:'Search',tabHistory:'History',tabPrices:'Prices',
+    pcCurve:'Price curve — all stations',pcRegion:'By region',pcCity:'In city',pcStation:'Station search',
+    pcFuelLbl:'Fuel type',pcViewLbl:'Show',pcAllFuels:'All types',
+    pcMin:'Cheapest',pcMax:'Most expensive',pcAvg:'Average',pcSpread:'Spread',
     histEmpty:'No search history yet.',
     histTitle:'Search history',histWeekTitle:'Prices by weekday (avg)',
     histTimeTitle:'Price over time',histClear:'Clear history',
@@ -950,7 +1034,8 @@ function setLang(l) {
   set('t-dest-lbl',T('destLbl'));set('t-detour-lbl',T('detourLbl'));set('t-corr-lbl',T('corrLbl'));set('t-gmap-lbl',T('gmapLbl'));
   set('t-find-btn',T('findBtn'));set('t-gps-btn',T('gpsBtn'));set('t-prices-btn',T('pricesBtn'));
   set('t-log-panel',T('logPanel'));set('t-map-hint',T('mapHint'));set('t-disc',T('disc'));
-  set('tab-search',T('tabSearch'));set('tab-history',T('tabHistory'));
+  set('tab-search',T('tabSearch'));set('tab-prices',T('tabPrices'));set('tab-history',T('tabHistory'));
+  set('t-pc-fuel-lbl',T('pcFuelLbl'));set('t-pc-view-lbl',T('pcViewLbl'));
   opt('viewType','region',T('optRegion'));opt('viewType','city',T('optCity'));opt('viewType','cheapest',T('optCheapest'));
   ph('startAddr',T('startPh'));ph('dest',T('destPh'));
   syncR();
@@ -991,6 +1076,7 @@ function showTab(tab) {
   document.getElementById('tab-'+tab).classList.add('active');
   document.getElementById('panel-'+tab).classList.add('active');
   if (tab === 'history') renderHistory();
+  if (tab === 'prices') initPriceTab();
 }
 
 // ═══════════════════════════════════════════════════
@@ -1818,6 +1904,279 @@ function histClear(){
     try{localStorage.removeItem(HIST_KEY);}catch(e){}
     renderHistory();
   }
+}
+
+// ═══════════════════════════════════════════════════
+// PRICES TAB
+// ═══════════════════════════════════════════════════
+let pcChartInst = null;
+let pcSelectedStation = null;
+
+// Näytetään Hinnat-välilehti — haetaan data jos ei vielä ole
+function initPriceTab() {
+  if (!ST.stations.length) {
+    loadPrices().then(() => renderPriceChart());
+  } else {
+    renderPriceChart();
+  }
+}
+
+// Vaihdetaan näkymätyyppiä → näytetään/piilotetaan suodatinkentät
+function onPcViewChange() {
+  const v = document.getElementById('pc-view').value;
+  document.getElementById('pc-region-wrap').style.display = (v === 'curve' || v === 'region') ? '' : 'none';
+  document.getElementById('pc-city-wrap').style.display   = v === 'city'    ? '' : 'none';
+  document.getElementById('pc-station-wrap').style.display= v === 'station' ? '' : 'none';
+  const sl = document.getElementById('pc-station-list');
+  if (v !== 'station') sl.style.display = 'none';
+  pcSelectedStation = null;
+  renderPriceChart();
+}
+
+// Live-haku asemalistasta
+function pcStationSearch() {
+  const q = (document.getElementById('pc-station-search').value || '').toLowerCase().trim();
+  const list = document.getElementById('pc-station-list');
+  if (!q || !ST.stations.length) { list.innerHTML = ''; list.style.display = 'none'; return; }
+
+  const matches = ST.stations.filter(s =>
+    (s.brand && s.brand.toLowerCase().includes(q)) ||
+    (s.city  && s.city.toLowerCase().includes(q))  ||
+    (s.name  && s.name.toLowerCase().includes(q))
+  ).slice(0, 25);
+
+  if (!matches.length) { list.innerHTML = '<div style="padding:10px;font-family:DM Mono,monospace;font-size:.72em;color:var(--mut)">Ei tuloksia</div>'; list.style.display = ''; return; }
+  list.style.display = '';
+  list.innerHTML = matches.map(s => {
+    const idx = ST.stations.indexOf(s);
+    const p95b    = s.p95    ? \`<span class="pc-fuel-badge" style="color:#b8f542">\${s.p95.toFixed(3)}</span>\` : '';
+    const p98b    = s.p98    ? \`<span class="pc-fuel-badge" style="color:#f5c842">\${s.p98.toFixed(3)}</span>\` : '';
+    const dieselb = s.diesel ? \`<span class="pc-fuel-badge" style="color:#6ab0f5">\${s.diesel.toFixed(3)}</span>\` : '';
+    const sel = pcSelectedStation === s ? ' selected' : '';
+    return \`<div class="pc-station-row\${sel}" onclick="pcSelectStation(\${idx})">
+      <span class="pc-station-brand">\${s.brand||'—'}</span>
+      <span class="pc-station-city">\${s.city||''}</span>
+      <span style="font-family:'DM Mono',monospace;font-size:.67em;color:var(--mut);flex:1">\${(s.name||'').slice(0,42)}</span>
+      \${p95b}\${p98b}\${dieselb}
+    </div>\`;
+  }).join('');
+}
+
+// Valitaan asema listalta → piirretään kaavio
+function pcSelectStation(idx) {
+  pcSelectedStation = ST.stations[idx];
+  // Korostetaan valittu rivi
+  document.querySelectorAll('.pc-station-row').forEach(r => r.classList.remove('selected'));
+  const rows = document.querySelectorAll('#pc-station-list .pc-station-row');
+  // Etsitään oikea rivi station-haun tuloksista
+  const matches = ST.stations.filter(s => {
+    const q = (document.getElementById('pc-station-search').value || '').toLowerCase();
+    return (s.brand&&s.brand.toLowerCase().includes(q))||(s.city&&s.city.toLowerCase().includes(q))||(s.name&&s.name.toLowerCase().includes(q));
+  });
+  const ri = matches.indexOf(pcSelectedStation);
+  if (ri >= 0 && rows[ri]) rows[ri].classList.add('selected');
+  renderPriceChart();
+}
+
+// ── Pääkaavio ────────────────────────────────────────
+function renderPriceChart() {
+  const view    = document.getElementById('pc-view').value;
+  const fuelKey = document.getElementById('pc-fuel').value;
+  if (!ST.stations.length) return;
+
+  const isDark    = document.documentElement.dataset.theme !== 'light';
+  const gridColor = isDark ? 'rgba(255,255,255,.07)' : 'rgba(0,0,0,.08)';
+  const textColor = isDark ? '#666d66' : '#666';
+  const FUEL_COLORS  = { p95:'#b8f542', p98:'#f5c842', diesel:'#6ab0f5' };
+  const FUEL_LABELS  = { p95:'95E10',   p98:'98E5',    diesel:'Diesel'  };
+
+  if (pcChartInst) { pcChartInst.destroy(); pcChartInst = null; }
+  const canvas = document.getElementById('pc-chart');
+  const ctx = canvas.getContext('2d');
+
+  // ── ASEMAHAKU: yksittäisen aseman kaikki polttoaineet ──────────────────────
+  if (view === 'station') {
+    if (!pcSelectedStation) {
+      document.getElementById('pc-chart-title').textContent = 'Valitse asema listasta';
+      document.getElementById('pc-stats').innerHTML = '';
+      return;
+    }
+    const s = pcSelectedStation;
+    const fuels = ['p95','p98','diesel'].filter(k => s[k] != null);
+    document.getElementById('pc-chart-title').textContent =
+      \`\${s.brand} — \${s.city||''} — \${(s.name||'').slice(0,40)}\`;
+
+    pcChartInst = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: fuels.map(k => FUEL_LABELS[k]),
+        datasets: [{
+          label: 'Hinta €/L',
+          data:  fuels.map(k => s[k]),
+          backgroundColor: fuels.map(k => FUEL_COLORS[k] + 'bb'),
+          borderColor:     fuels.map(k => FUEL_COLORS[k]),
+          borderWidth: 2, borderRadius: 4,
+        }],
+      },
+      options: {
+        responsive: true, indexAxis: 'x',
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: c => c.parsed.y.toFixed(3) + ' €/L' } },
+        },
+        scales: {
+          y: { ticks: { color: textColor, callback: v => v.toFixed(3)+'€' }, grid: { color: gridColor } },
+          x: { ticks: { color: textColor, font: { size: 13, weight: '600' } }, grid: { display: false } },
+        },
+      },
+    });
+    renderPcStats([s], fuelKey==='all'?'p95':fuelKey);
+    return;
+  }
+
+  // ── Kerätään pooli suodattimien mukaan ────────────────────────────────────
+  let pool  = [...ST.stations];
+  let title = '';
+
+  if (view === 'curve' || view === 'region') {
+    const reg = document.getElementById('pc-region').value;
+    if (reg && REGIONS[reg]) {
+      pool  = pool.filter(s => REGIONS[reg].includes(s.city));
+      title = reg.replace(/_/g, ' ');
+    }
+  } else if (view === 'city') {
+    const city = (document.getElementById('pc-city').value || '').trim();
+    if (city) {
+      pool  = pool.filter(s => s.city && s.city.toLowerCase().includes(city.toLowerCase()));
+      title = city;
+    }
+  }
+
+  const fk = fuelKey === 'all' ? null : fuelKey;
+
+  // ── ALUE-NÄKYMÄ: palkit kaupungeittain ────────────────────────────────────
+  if (view === 'region') {
+    const byCity = {};
+    pool.forEach(s => {
+      const keys = fk ? [fk] : ['p95','p98','diesel'];
+      keys.forEach(k => {
+        if (s[k] == null) return;
+        if (!byCity[s.city]) byCity[s.city] = {};
+        if (!byCity[s.city][k]) byCity[s.city][k] = [];
+        byCity[s.city][k].push(s[k]);
+      });
+    });
+    const cities   = Object.keys(byCity).sort();
+    const fuelKeys = fk ? [fk] : ['p95','p98','diesel'];
+    document.getElementById('pc-chart-title').textContent =
+      'Keskihinta kaupungeittain' + (title ? \` — \${title}\` : '');
+
+    const datasets = fuelKeys.map(k => ({
+      label: FUEL_LABELS[k],
+      data:  cities.map(c => byCity[c][k]
+        ? +(byCity[c][k].reduce((a,b)=>a+b,0)/byCity[c][k].length).toFixed(3)
+        : null),
+      backgroundColor: FUEL_COLORS[k] + '99',
+      borderColor:     FUEL_COLORS[k],
+      borderWidth: 1.5, borderRadius: 2,
+    }));
+
+    pcChartInst = new Chart(ctx, {
+      type: 'bar',
+      data: { labels: cities, datasets },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { labels: { color: textColor, font: { family: 'DM Mono, monospace', size: 11 } } },
+          tooltip: { callbacks: { label: c => c.dataset.label + ': ' + (c.parsed.y||0).toFixed(3) + ' €/L' } },
+        },
+        scales: {
+          y: { ticks: { color: textColor, callback: v => v.toFixed(3)+'€' }, grid: { color: gridColor } },
+          x: { ticks: { color: textColor, font: { size: 10 }, maxRotation: 45 }, grid: { display: false } },
+        },
+      },
+    });
+    renderPcStats(pool, fk||'p95');
+    return;
+  }
+
+  // ── HINTAKÄYRÄ ja KAUPUNKI: järjestetty käyrä halvimmasta kalleimpaan ─────
+  const chartFk = fk || 'p95';
+  const sorted  = pool.filter(s => s[chartFk] != null).sort((a,b) => a[chartFk] - b[chartFk]);
+
+  if (!sorted.length) {
+    document.getElementById('pc-chart-title').textContent = 'Ei dataa valitulle suodatukselle';
+    document.getElementById('pc-stats').innerHTML = '';
+    return;
+  }
+
+  document.getElementById('pc-chart-title').textContent = view === 'city'
+    ? \`Hinnat — \${title||'kaikki'} · \${FUEL_LABELS[chartFk]} · \${sorted.length} as.\`
+    : \`Hintakäyrä — \${FUEL_LABELS[chartFk]} · \${sorted.length} as.\`;
+
+  const prices  = sorted.map(s => s[chartFk]);
+  const minP    = Math.min(...prices);
+  const maxP    = Math.max(...prices);
+  const pct     = p => (p - minP) / (maxP - minP || 1);
+  const bgColors = prices.map(p => {
+    const t = pct(p);
+    return t < 0.33 ? 'rgba(184,245,66,.78)' : t < 0.67 ? 'rgba(245,200,66,.78)' : 'rgba(245,80,66,.78)';
+  });
+
+  pcChartInst = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: sorted.map(s => \`\${s.brand} \${s.city||''}\`),
+      datasets: [{
+        label: FUEL_LABELS[chartFk] + ' (€/L)',
+        data:  prices,
+        backgroundColor: bgColors,
+        borderColor: bgColors,
+        borderWidth: 0,
+        borderRadius: 1,
+      }],
+    },
+    options: {
+      responsive: true,
+      animation: { duration: sorted.length > 200 ? 0 : 400 },
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: {
+          title: c => (sorted[c[0].dataIndex].name || '').slice(0,50) || sorted[c[0].dataIndex].brand,
+          label: c => \`\${sorted[c.dataIndex].brand} \${sorted[c.dataIndex].city||''}: \${c.parsed.y.toFixed(3)} €/L\`,
+        }},
+      },
+      scales: {
+        y: {
+          min: Math.max(0, minP - 0.015),
+          ticks: { color: textColor, callback: v => v.toFixed(3)+'€' },
+          grid: { color: gridColor },
+        },
+        x: {
+          ticks: { color: textColor, font: { size: 9 }, maxRotation: 60,
+            callback: (_, i) => sorted[i] ? sorted[i].brand.slice(0,6) : '' },
+          grid: { display: false },
+        },
+      },
+    },
+  });
+  renderPcStats(sorted, chartFk);
+}
+
+// Tilastoruudut kaavion alle
+function renderPcStats(stations, fuelKey) {
+  const el = document.getElementById('pc-stats');
+  const prices = stations.map(s => s[fuelKey]).filter(Boolean);
+  if (!prices.length) { el.innerHTML = ''; return; }
+  const minV = Math.min(...prices), maxV = Math.max(...prices);
+  const avgV = prices.reduce((a,b)=>a+b,0)/prices.length;
+  el.innerHTML = [
+    sbox(T('pcMin'), minV.toFixed(3), '€/L', 'var(--good)'),
+    sbox(T('pcMax'), maxV.toFixed(3), '€/L', 'var(--bad)'),
+    sbox(T('pcAvg'), avgV.toFixed(3), '€/L'),
+    sbox(T('pcSpread'), (maxV-minV).toFixed(3), '€/L · '+prices.length+' as.',
+      (maxV-minV) > 0.10 ? 'var(--warn)' : 'var(--good)'),
+  ].join('');
 }
 
 // ═══════════════════════════════════════════════════
