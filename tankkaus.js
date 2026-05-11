@@ -10,7 +10,84 @@
 const http   = require('http');
 const https  = require('https');
 const { exec } = require('child_process');
+const path   = require('path');
 const PORT   = process.env.PORT || 3001;
+
+// ─── SQLite — hintahistoria ───────────────────────────────────────────────────
+// node:sqlite on sisäänrakennettu Node 22:ssa, ei npm-paketteja
+let db = null;
+try {
+  const { DatabaseSync } = require('node:sqlite');
+  const dbPath = path.join(__dirname, 'prices.db');
+  db = new DatabaseSync(dbPath);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS prices (
+      id      TEXT    NOT NULL,
+      ts      INTEGER NOT NULL,
+      brand   TEXT,
+      city    TEXT,
+      lat     REAL,
+      lng     REAL,
+      p95     REAL,
+      p98     REAL,
+      diesel  REAL,
+      PRIMARY KEY (id, ts)
+    );
+    CREATE INDEX IF NOT EXISTS idx_id_ts ON prices (id, ts);
+    CREATE INDEX IF NOT EXISTS idx_ts    ON prices (ts);
+    CREATE TABLE IF NOT EXISTS snap_log (
+      date TEXT PRIMARY KEY
+    );
+  `);
+  console.log('  ✓ SQLite prices.db alustettu');
+} catch (e) {
+  console.log('  ⚠ SQLite ei käytettävissä:', e.message, '(historia pois käytöstä)');
+  db = null;
+}
+
+// Muodosta asemalle stabiili ID koordinaateista
+function stationId(s) {
+  return `${s.lat.toFixed(5)}_${s.lng.toFixed(5)}`;
+}
+
+// Tallenna snapshot kerran päivässä — vain muuttuneet hinnat
+function saveSnapshot(stations) {
+  if (!db) return;
+  try {
+    const today = new Date().toISOString().slice(0, 10); // 'YYYY-MM-DD'
+    const already = db.prepare('SELECT 1 FROM snap_log WHERE date = ?').get(today);
+    if (already) { console.log('  Snapshot jo tallennettu tänään, ohitetaan'); return; }
+
+    const ts = Date.now();
+    const getLast = db.prepare(
+      'SELECT p95, p98, diesel FROM prices WHERE id = ? ORDER BY ts DESC LIMIT 1'
+    );
+    const ins = db.prepare(
+      'INSERT OR IGNORE INTO prices (id,ts,brand,city,lat,lng,p95,p98,diesel) VALUES (?,?,?,?,?,?,?,?,?)'
+    );
+
+    let saved = 0;
+    const run = db.transaction(() => {
+      for (const s of stations) {
+        const id   = stationId(s);
+        const last = getLast.get(id);
+        const changed = !last
+          || last.p95    !== (s.p95    ?? null)
+          || last.p98    !== (s.p98    ?? null)
+          || last.diesel !== (s.diesel ?? null);
+        if (changed) {
+          ins.run(id, ts, s.brand, s.city, s.lat, s.lng, s.p95??null, s.p98??null, s.diesel??null);
+          saved++;
+        }
+      }
+      db.prepare('INSERT OR IGNORE INTO snap_log (date) VALUES (?)').run(today);
+    });
+    run();
+    console.log(`  ✓ Snapshot: ${saved}/${stations.length} asemaa tallennettu (hinnat muuttuneet)`);
+  } catch (e) {
+    console.error('  ✗ Snapshot-virhe:', e.message);
+  }
+}
 
 function openBrowser(url) {
   const cmd = process.platform === 'win32' ? `start "" "${url}"`
@@ -196,6 +273,10 @@ async function fetchAllStations() {
   console.log(`  Parsed ${stations.length} stations with real coordinates (stale >3d filtered out)`);
   xmlCache = stations;
   xmlCacheTime = now;
+
+  // Tallennetaan päivän snapshot SQLiteen (vain muuttuneet hinnat)
+  saveSnapshot(stations);
+
   return stations;
 }
 
@@ -229,6 +310,14 @@ async function scrapePolttoaine(query) {
   };
 }
 
+// ─── Haversine (palvelinpuoli GPS-suodatusta varten) ─────────────────────────
+function haversineServer(lat1, lng1, lat2, lng2) {
+  const R = 6371, toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1), dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
 // ─── HTTP Server ──────────────────────────────────────────────────────────────
 
 const server = http.createServer(async (req, res) => {
@@ -258,18 +347,82 @@ const server = http.createServer(async (req, res) => {
       const region = url.searchParams.get('region');
       const city   = url.searchParams.get('city');
       const cmd    = url.searchParams.get('cmd');
+      const lat    = parseFloat(url.searchParams.get('lat'));
+      const lng    = parseFloat(url.searchParams.get('lng'));
+      const radius = parseFloat(url.searchParams.get('radius')) || 0; // km, 0 = ei rajoitusta
 
       const data = await scrapePolttoaine({ region, city, cmd });
+
+      // GPS-sädesuodatus palvelimella — leikkaa payloadin ennen lähetystä
+      if (!isNaN(lat) && !isNaN(lng) && radius > 0) {
+        const before = data.stations.length;
+        data.stations = data.stations.filter(s => haversineServer(lat, lng, s.lat, s.lng) <= radius);
+        console.log(`  GPS-suodatus ${radius}km: ${before} → ${data.stations.length} asemaa`);
+        data.count = data.stations.length;
+      }
+
       data.fetchedAt = new Date().toISOString();
-      // Estä selaimen välimuisti — hinnat muuttuvat jatkuvasti
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');
       res.writeHead(200);
-      const json = JSON.stringify({ ok: true, ...data });
-      res.end(Buffer.from(json, 'utf8'));
+      res.end(Buffer.from(JSON.stringify({ ok: true, ...data }), 'utf8'));
     } catch (e) {
       console.error('  ✗ Scrape error:', e.message);
+      res.writeHead(500);
+      res.end(JSON.stringify({ ok: false, error: e.message }));
+    }
+    return;
+  }
+
+  // ── /api/history ──────────────────────────────────────────────────────────
+  // ?id=STATION_ID&days=30   → aikasarja yhdelle asemalle
+  // ?city=Tampere&days=90    → päiväkeskiarvo kaikille asemille kaupungissa
+  // ?region=PK-Seutu&days=30 → päiväkeskiarvo koko alueelle
+  if (p === '/api/history') {
+    if (!db) {
+      res.writeHead(503);
+      res.end(JSON.stringify({ ok: false, error: 'SQLite ei käytössä' }));
+      return;
+    }
+    try {
+      const id     = url.searchParams.get('id');
+      const city   = url.searchParams.get('city');
+      const region = url.searchParams.get('region');
+      const days   = Math.min(parseInt(url.searchParams.get('days')) || 30, 3650);
+      const since  = Date.now() - days * 24 * 3600 * 1000;
+
+      let rows;
+      if (id) {
+        // Yksittäinen asema — kaikki tallennetut pisteet
+        rows = db.prepare(
+          'SELECT ts,p95,p98,diesel FROM prices WHERE id=? AND ts>=? ORDER BY ts'
+        ).all(id, since);
+        res.writeHead(200);
+        res.end(JSON.stringify({ ok: true, id, days, rows }));
+      } else if (city) {
+        // Kaupunki — päiväkeskiarvo
+        rows = db.prepare(`
+          SELECT date(ts/1000,'unixepoch') as d,
+                 AVG(p95) as p95, AVG(p98) as p98, AVG(diesel) as diesel,
+                 COUNT(*) as n
+          FROM prices WHERE city=? AND ts>=?
+          GROUP BY d ORDER BY d
+        `).all(city, since);
+        res.writeHead(200);
+        res.end(JSON.stringify({ ok: true, city, days, rows }));
+      } else if (region) {
+        // Alue — haetaan kaupungit REGIONS-objektista (kovakoodattu lista)
+        // Palvelimella ei ole REGIONS-objektia, käytetään client-puolen listaa
+        // Sen sijaan palautetaan kaikki asemat alueelta (client suodattaa)
+        res.writeHead(400);
+        res.end(JSON.stringify({ ok: false, error: 'Käytä city-parametria tai hae id per asema' }));
+      } else {
+        res.writeHead(400);
+        res.end(JSON.stringify({ ok: false, error: 'Anna id tai city' }));
+      }
+    } catch (e) {
+      console.error('  ✗ History error:', e.message);
       res.writeHead(500);
       res.end(JSON.stringify({ ok: false, error: e.message }));
     }
@@ -511,6 +664,9 @@ input[type=range]{padding:0;height:3px;accent-color:var(--acc);cursor:pointer}
 .pc-fuel-badge{font-family:'Bebas Neue',sans-serif;font-size:1.1em;margin-left:6px}
 .pc-chart-wrap{background:var(--s1);border:1px solid var(--b1);border-radius:3px;padding:16px;margin-bottom:14px}
 .pc-chart-wrap canvas{max-height:380px}
+.pc-tw-btn{font-family:'DM Mono',monospace;font-size:.72em;padding:5px 12px;border:1px solid var(--b1);border-radius:2px;background:var(--s2);color:var(--mut);cursor:pointer;transition:all .15s}
+.pc-tw-btn:hover{color:var(--txt);border-color:var(--acc)}
+.pc-tw-btn.active{background:color-mix(in srgb,var(--acc) 15%,transparent);border-color:var(--acc);color:var(--acc)}
 .hist-del:hover{background:color-mix(in srgb,var(--bad) 15%,transparent)}
 .cost-formula{font-family:'DM Mono',monospace;font-size:.6em;color:var(--m2);margin-top:3px;letter-spacing:.3px}
 .card-best-highlight{border-color:var(--acc)!important;border-width:2px!important;
@@ -754,6 +910,13 @@ input[type=range]{padding:0;height:3px;accent-color:var(--acc);cursor:pointer}
             <input type="number" id="corr" value="3" min="1" max="20">
           </div>
         </div>
+        <div class="f2" style="margin-top:8px">
+          <div>
+            <label id="t-radius-lbl">Hakusäde (km) <span style="color:var(--mut);font-size:.85em">— rajaa palvelimella</span></label>
+            <input type="number" id="searchRadius" value="50" min="0" max="500"
+              title="0 = kaikki asemat Suomessa">
+          </div>
+        </div>
         <!-- Google Maps API -avain poistettu — käytetään ilmaista OSRM-reititystä -->
         <input type="hidden" id="gmapKey" value="">
       </div>
@@ -848,7 +1011,7 @@ input[type=range]{padding:0;height:3px;accent-color:var(--acc);cursor:pointer}
     </div>
     <div class="fg" id="pc-city-wrap" style="display:none">
       <label>Kaupunki</label>
-      <input id="pc-city" type="text" placeholder="esim. Tampere" oninput="renderPriceChart()">
+      <input id="pc-city" type="text" placeholder="esim. Tampere" oninput="renderPriceChart();if(this.value.trim().length>2)loadCityHistory(this.value.trim())">
     </div>
     <div class="fg" id="pc-station-wrap" style="display:none">
       <label>Hae asemaa</label>
@@ -856,9 +1019,27 @@ input[type=range]{padding:0;height:3px;accent-color:var(--acc);cursor:pointer}
     </div>
     <button class="btn sec" style="width:auto;padding:8px 16px;align-self:flex-end" onclick="initPriceTab()">↻ Päivitä</button>
   </div>
+  <!-- Aikaikkunavalitsin — näkyy vain asema/kaupunki-historianäkymässä -->
+  <div id="pc-timewin-wrap" style="display:none;margin-bottom:12px">
+    <div class="chart-title" style="margin-bottom:8px">Aikaikkuna</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <button class="pc-tw-btn active" onclick="setPcTimeWin(7)"  data-days="7">7 pv</button>
+      <button class="pc-tw-btn"        onclick="setPcTimeWin(30)" data-days="30">30 pv</button>
+      <button class="pc-tw-btn"        onclick="setPcTimeWin(90)" data-days="90">90 pv</button>
+      <button class="pc-tw-btn"        onclick="setPcTimeWin(180)" data-days="180">6 kk</button>
+      <button class="pc-tw-btn"        onclick="setPcTimeWin(365)" data-days="365">1 v</button>
+      <button class="pc-tw-btn"        onclick="setPcTimeWin(0)"   data-days="0">Kaikki</button>
+    </div>
+  </div>
+
   <div class="pc-chart-wrap">
     <div class="chart-title" id="pc-chart-title">Hintakäyrä</div>
     <canvas id="pc-chart"></canvas>
+  </div>
+  <!-- Historia-kaavio asemalle/kaupungille -->
+  <div class="pc-chart-wrap" id="pc-hist-wrap" style="display:none">
+    <div class="chart-title" id="pc-hist-title">Hintakehitys</div>
+    <canvas id="pc-hist-chart"></canvas>
   </div>
   <div id="pc-station-list" class="pc-station-list" style="display:none"></div>
   <div id="pc-stats" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px"></div>
@@ -902,7 +1083,7 @@ const LANGS = {
     startLbl:'Lähtöpaikka',startHint:'(tyhjä = GPS)',
     startPh:'esim. Mannerheimintie 1, Helsinki…',
     destLbl:'Määränpää',destPh:'esim. Tampere, Lahti, osoite…',
-    detourLbl:'Max kiertotie (km)',corrLbl:'Käytävä (km)',
+    detourLbl:'Max kiertotie (km)',corrLbl:'Käytävä (km)',radiusLbl:'Hakusäde (km)',
     gmapLbl:'Google Maps API-avain (valinnainen)',
     findBtn:'▶ ETSI OPTIMAALISIN ASEMA',gpsBtn:'⊕ GPS',pricesBtn:'↻ HINNAT',
     logPanel:'Loki',mapHint:'Aja haku niin kartta ilmestyy',
@@ -943,7 +1124,7 @@ const LANGS = {
     startLbl:'Startplats',startHint:'(tom = GPS)',
     startPh:'t.ex. Mannerheimvägen 1, Helsingfors…',
     destLbl:'Destination',destPh:'t.ex. Tammerfors, Lahtis, adress…',
-    detourLbl:'Max omväg (km)',corrLbl:'Korridor (km)',
+    detourLbl:'Max omväg (km)',corrLbl:'Korridor (km)',radiusLbl:'Sökradie (km)',
     gmapLbl:'Google Maps API-nyckel (valfri)',
     findBtn:'▶ HITTA OPTIMALA STATION',gpsBtn:'⊕ GPS',pricesBtn:'↻ PRISER',
     logPanel:'Logg',mapHint:'Sök för att visa kartan',
@@ -983,7 +1164,7 @@ const LANGS = {
     startLbl:'Starting location',startHint:'(empty = GPS)',
     startPh:'e.g. Mannerheimintie 1, Helsinki…',
     destLbl:'Destination',destPh:'e.g. Tampere, Lahti, address…',
-    detourLbl:'Max detour (km)',corrLbl:'Corridor (km)',
+    detourLbl:'Max detour (km)',corrLbl:'Corridor (km)',radiusLbl:'Search radius (km)',
     gmapLbl:'Google Maps API key (optional)',
     findBtn:'▶ FIND OPTIMAL STATION',gpsBtn:'⊕ GPS',pricesBtn:'↻ PRICES',
     logPanel:'Log',mapHint:'Run a search to see map',
@@ -1032,6 +1213,8 @@ function setLang(l) {
   set('t-curfuel-lbl',T('curFuelLbl'));set('t-fillto-lbl',T('fillToLbl'));
   set('t-route-panel',T('routePanel'));set('t-start-lbl',T('startLbl'));set('t-start-hint',T('startHint'));
   set('t-dest-lbl',T('destLbl'));set('t-detour-lbl',T('detourLbl'));set('t-corr-lbl',T('corrLbl'));set('t-gmap-lbl',T('gmapLbl'));
+  const rlbl=document.getElementById('t-radius-lbl');
+  if(rlbl)rlbl.childNodes[0].textContent=T('radiusLbl')+' ';
   set('t-find-btn',T('findBtn'));set('t-gps-btn',T('gpsBtn'));set('t-prices-btn',T('pricesBtn'));
   set('t-log-panel',T('logPanel'));set('t-map-hint',T('mapHint'));set('t-disc',T('disc'));
   set('tab-search',T('tabSearch'));set('tab-prices',T('tabPrices'));set('tab-history',T('tabHistory'));
@@ -1230,13 +1413,21 @@ async function loadPrices(manual=false){
   const view=document.getElementById('viewType').value;
   const reg=document.getElementById('regionVal').value;
   const city=document.getElementById('cityVal').value;
+  const radius=parseInt(document.getElementById('searchRadius')?.value)||0;
+
   let url='/api/prices?';
   // Pikahaku (ja run()-kutsu) hakee AINA kaikki asemat — GPS+säde-suodatus hoitaa rajauksen.
   // Lisäasetuksista "↻ Päivitä hinnat" -nappi (manual=true) käyttää valittua aluetta/kaupunkia.
   if(manual && view==='region') url+='region='+encodeURIComponent(reg);
   else if(manual && view==='city') url+='city='+encodeURIComponent(city);
   else if(manual && view==='cheapest') url+='cmd=20halvinta';
-  else url='/api/prices'; // kaikki asemat
+  else url='/api/prices?'; // kaikki asemat, mutta sädesuodatus voi rajata
+
+  // Lisää GPS-koordinaatit + hakusäde palvelinpuolista suodatusta varten
+  if(ST.loc && radius>0){
+    url+=(url.includes('?')&&!url.endsWith('?')?'&':'')
+      +'lat='+ST.loc.lat+'&lng='+ST.loc.lng+'&radius='+radius;
+  }
   log(T('fetching'));
   loader(true,T('fetching'));
   try{
@@ -1924,13 +2115,21 @@ function initPriceTab() {
 // Vaihdetaan näkymätyyppiä → näytetään/piilotetaan suodatinkentät
 function onPcViewChange() {
   const v = document.getElementById('pc-view').value;
-  document.getElementById('pc-region-wrap').style.display = (v === 'curve' || v === 'region') ? '' : 'none';
-  document.getElementById('pc-city-wrap').style.display   = v === 'city'    ? '' : 'none';
-  document.getElementById('pc-station-wrap').style.display= v === 'station' ? '' : 'none';
-  const sl = document.getElementById('pc-station-list');
-  if (v !== 'station') sl.style.display = 'none';
+  document.getElementById('pc-region-wrap').style.display  = (v === 'curve' || v === 'region') ? '' : 'none';
+  document.getElementById('pc-city-wrap').style.display    = v === 'city'    ? '' : 'none';
+  document.getElementById('pc-station-wrap').style.display = v === 'station' ? '' : 'none';
+  if (v !== 'station') document.getElementById('pc-station-list').style.display = 'none';
+  // Piilota historia-kaavio ja aikaikkunavalitsin kun vaihdetaan pois
+  document.getElementById('pc-hist-wrap').style.display     = 'none';
+  document.getElementById('pc-timewin-wrap').style.display  = (v === 'city' || v === 'station') ? '' : 'none';
+  if (pcHistChartInst) { pcHistChartInst.destroy(); pcHistChartInst = null; }
   pcSelectedStation = null;
   renderPriceChart();
+  // Kaupunki-näkymässä ladataan historia heti jos kenttä ei ole tyhjä
+  if (v === 'city') {
+    const city = (document.getElementById('pc-city').value || '').trim();
+    if (city) loadCityHistory(city);
+  }
 }
 
 // Live-haku asemalistasta
@@ -1962,20 +2161,22 @@ function pcStationSearch() {
   }).join('');
 }
 
-// Valitaan asema listalta → piirretään kaavio
+// Valitaan asema listalta → piirretään kaavio + ladataan historia
 function pcSelectStation(idx) {
   pcSelectedStation = ST.stations[idx];
   // Korostetaan valittu rivi
   document.querySelectorAll('.pc-station-row').forEach(r => r.classList.remove('selected'));
   const rows = document.querySelectorAll('#pc-station-list .pc-station-row');
-  // Etsitään oikea rivi station-haun tuloksista
-  const matches = ST.stations.filter(s => {
-    const q = (document.getElementById('pc-station-search').value || '').toLowerCase();
-    return (s.brand&&s.brand.toLowerCase().includes(q))||(s.city&&s.city.toLowerCase().includes(q))||(s.name&&s.name.toLowerCase().includes(q));
-  });
+  const q = (document.getElementById('pc-station-search').value || '').toLowerCase();
+  const matches = ST.stations.filter(s =>
+    (s.brand&&s.brand.toLowerCase().includes(q))||(s.city&&s.city.toLowerCase().includes(q))||(s.name&&s.name.toLowerCase().includes(q))
+  );
   const ri = matches.indexOf(pcSelectedStation);
   if (ri >= 0 && rows[ri]) rows[ri].classList.add('selected');
   renderPriceChart();
+  // Lataa historia palvelimelta
+  document.getElementById('pc-timewin-wrap').style.display = '';
+  loadStationHistory(pcSelectedStation);
 }
 
 // ── Pääkaavio ────────────────────────────────────────
@@ -2161,6 +2362,117 @@ function renderPriceChart() {
     },
   });
   renderPcStats(sorted, chartFk);
+}
+
+// ── Aikaikkunavalitsin ────────────────────────────────────────────────────────
+let pcHistDays = 30;
+let pcHistChartInst = null;
+
+function setPcTimeWin(days) {
+  pcHistDays = days;
+  document.querySelectorAll('.pc-tw-btn').forEach(b => {
+    b.classList.toggle('active', +b.dataset.days === days);
+  });
+  // Päivitä historia jos asema tai kaupunki valittu
+  const view = document.getElementById('pc-view').value;
+  if (view === 'station' && pcSelectedStation) loadStationHistory(pcSelectedStation);
+  else if (view === 'city') {
+    const city = (document.getElementById('pc-city').value || '').trim();
+    if (city) loadCityHistory(city);
+  }
+}
+
+// Lataa yksittäisen aseman historia palvelimelta
+async function loadStationHistory(s) {
+  const id = stationIdClient(s);
+  const days = pcHistDays || 3650;
+  const wrap = document.getElementById('pc-hist-wrap');
+  const title = document.getElementById('pc-hist-title');
+  title.textContent = \`\${s.brand} \${s.city||''} — hintakehitys\`;
+  wrap.style.display = '';
+
+  try {
+    const r = await fetch(\`/api/history?id=\${encodeURIComponent(id)}&days=\${days}\`, {cache:'no-store'});
+    const d = await r.json();
+    if (!d.ok || !d.rows?.length) {
+      title.textContent = \`\${s.brand} \${s.city||''} — ei historiadataa vielä (käynnissä vain \${days} pv)\`;
+      if(pcHistChartInst){pcHistChartInst.destroy();pcHistChartInst=null;}
+      return;
+    }
+    renderHistoryChart(d.rows, \`\${s.brand} \${s.city||''}\`);
+  } catch(e) {
+    title.textContent = 'Historia ei saatavilla: ' + e.message;
+  }
+}
+
+// Lataa kaupungin päiväkeskiarvot palvelimelta
+async function loadCityHistory(city) {
+  const days = pcHistDays || 3650;
+  const wrap = document.getElementById('pc-hist-wrap');
+  const title = document.getElementById('pc-hist-title');
+  title.textContent = \`\${city} — hintakehitys (päiväkeskiarvo)\`;
+  wrap.style.display = '';
+
+  try {
+    const r = await fetch(\`/api/history?city=\${encodeURIComponent(city)}&days=\${days}\`, {cache:'no-store'});
+    const d = await r.json();
+    if (!d.ok || !d.rows?.length) {
+      title.textContent = \`\${city} — ei historiadataa vielä\`;
+      if(pcHistChartInst){pcHistChartInst.destroy();pcHistChartInst=null;}
+      return;
+    }
+    renderHistoryChart(d.rows, city);
+  } catch(e) {
+    title.textContent = 'Historia ei saatavilla: ' + e.message;
+  }
+}
+
+// Piirtää historia-kaavion (ts/d + p95/p98/diesel rivit)
+function renderHistoryChart(rows, label) {
+  if (pcHistChartInst) { pcHistChartInst.destroy(); pcHistChartInst = null; }
+  const ctx = document.getElementById('pc-hist-chart').getContext('2d');
+  const isDark = document.documentElement.dataset.theme !== 'light';
+  const gridColor = isDark ? 'rgba(255,255,255,.07)' : 'rgba(0,0,0,.08)';
+  const textColor = isDark ? '#666d66' : '#666';
+
+  // rows voi olla joko {ts, p95, p98, diesel} (asema) tai {d, p95, p98, diesel} (kaupunki)
+  const isDateStr = !!rows[0]?.d;
+  const xVals = rows.map(r => isDateStr ? r.d : new Date(r.ts).toISOString().slice(0,10));
+
+  const datasets = [];
+  if (rows.some(r => r.p95 != null))
+    datasets.push({ label:'95E10', data: rows.map(r=>r.p95), borderColor:'#b8f542',
+      backgroundColor:'rgba(184,245,66,.08)', tension:.3, pointRadius:3, borderWidth:2 });
+  if (rows.some(r => r.p98 != null))
+    datasets.push({ label:'98E5', data: rows.map(r=>r.p98), borderColor:'#f5c842',
+      backgroundColor:'rgba(245,200,66,.08)', tension:.3, pointRadius:3, borderWidth:2 });
+  if (rows.some(r => r.diesel != null))
+    datasets.push({ label:'Diesel', data: rows.map(r=>r.diesel), borderColor:'#6ab0f5',
+      backgroundColor:'rgba(106,176,245,.08)', tension:.3, pointRadius:3, borderWidth:2 });
+
+  if (!datasets.length) return;
+
+  pcHistChartInst = new Chart(ctx, {
+    type: 'line',
+    data: { labels: xVals, datasets },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { labels: { color: textColor, font: { family: 'DM Mono, monospace', size: 11 } } },
+        tooltip: { callbacks: { label: c => c.dataset.label + ': ' + (c.parsed.y||0).toFixed(3) + ' €/L' } },
+      },
+      scales: {
+        x: { ticks: { color: textColor, font: { size: 10 }, maxRotation: 45, maxTicksLimit: 12 },
+             grid: { color: gridColor } },
+        y: { ticks: { color: textColor, callback: v => v.toFixed(3)+'€' }, grid: { color: gridColor } },
+      },
+    },
+  });
+}
+
+// Asema-ID asiakaspuolella (sama logiikka kuin palvelimella)
+function stationIdClient(s) {
+  return s.lat.toFixed(5) + '_' + s.lng.toFixed(5);
 }
 
 // Tilastoruudut kaavion alle
