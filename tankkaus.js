@@ -38,6 +38,10 @@ try {
     CREATE TABLE IF NOT EXISTS snap_log (
       date TEXT PRIMARY KEY
     );
+    CREATE TABLE IF NOT EXISTS fetch_log (
+      ts      INTEGER PRIMARY KEY,
+      source  TEXT NOT NULL
+    );
   `);
   console.log('  ✓ SQLite prices.db alustettu');
 } catch (e) {
@@ -264,6 +268,7 @@ async function fetchAllStations() {
   }
 
   console.log('  Fetching polttoaine.net/api/ ...');
+  if (db) { try { db.prepare('INSERT INTO fetch_log (ts, source) VALUES (?, ?)').run(Date.now(), 'auto'); } catch(_){} }
   const raw  = await get('polttoaine.net', '/api/', 'binary');
   const xml  = win1252(raw);
   console.log(`  Got ${xml.length} bytes, ~${(xml.match(/<station>/g)||[]).length} stations`);
@@ -441,6 +446,19 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── /api/stats ────────────────────────────────────────────────────────────
+  if (p === '/api/stats') {
+    if (!db) { res.writeHead(503); res.end(JSON.stringify({ ok: false })); return; }
+    const fetchCount   = db.prepare('SELECT COUNT(*) as n FROM fetch_log').get().n;
+    const firstFetch   = db.prepare('SELECT MIN(ts) as t FROM fetch_log').get().t;
+    const lastFetch    = db.prepare('SELECT MAX(ts) as t FROM fetch_log').get().t;
+    const daysOfData   = db.prepare("SELECT COUNT(DISTINCT date(ts/1000,'unixepoch')) as n FROM prices").get().n;
+    const stationCount = db.prepare('SELECT COUNT(DISTINCT id) as n FROM prices').get().n;
+    res.writeHead(200);
+    res.end(JSON.stringify({ ok: true, fetchCount, firstFetch, lastFetch, daysOfData, stationCount }));
+    return;
+  }
+
   // ── /api/health ───────────────────────────────────────────────────────────
   if (p === '/api/health') {
     res.writeHead(200);
@@ -463,6 +481,25 @@ server.listen(PORT, () => {
   console.log('');
   // Auto-open browser after short delay so server is ready
   setTimeout(() => openBrowser(url), 500);
+
+  // ── Ajastettu taustahaku klo 8, 15 ja 20 ──────────────────────────────────
+  function scheduleNextFetch() {
+    const now     = new Date();
+    const hh      = now.getHours();
+    const targets = [8, 15, 20];
+    let next      = targets.find(h => h > hh);
+    const nextDate = new Date(now);
+    if (next == null) { next = targets[0]; nextDate.setDate(nextDate.getDate() + 1); }
+    nextDate.setHours(next, 0, 5, 0);
+    const ms = nextDate - now;
+    console.log('  ⏰ Seuraava taustahaku: ' + nextDate.toLocaleTimeString('fi-FI') + ' (' + Math.round(ms/60000) + ' min paasta)');
+    setTimeout(async () => {
+      console.log('  ⏰ Taustahaku kaynnistyy klo ' + new Date().getHours() + ':00...');
+      try { await fetchAllStations(); } catch(e) { console.error('  ✗ Taustahaku epaonnistui:', e.message); }
+      scheduleNextFetch();
+    }, ms);
+  }
+  scheduleNextFetch();
 }).on('error', err => {
   if (err.code === 'EADDRINUSE') {
     console.log(`\n  Portti ${PORT} on jo käytössä.`);
@@ -607,6 +644,30 @@ input[type=range]{padding:0;height:3px;accent-color:var(--acc);cursor:pointer}
 .rs{font-family:'DM Mono',monospace;font-size:.8em;color:var(--mut)}
 .sg{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}
 @media(max-width:560px){.sg{grid-template-columns:1fr 1fr}}
+@media(max-width:600px){
+  header{padding:8px 0 6px}
+  .logo{font-size:26px!important;letter-spacing:1px}
+  #kp-logo-svg,.tagline{display:none}
+  #sz-s,#sz-n,#sz-l,#btn-sv,#btn-en{display:none}
+  .hright{gap:4px}
+  .wrap{padding:0 10px 70px}
+  .tabs{display:none}
+  .mobile-nav{display:flex!important}
+  #log-panel{display:none}
+  #mapwrap{display:none}
+  body.mobile-map #mapwrap{display:block;height:calc(100vh - 120px);margin-bottom:0}
+  body.mobile-map #res,body.mobile-map #ldr{display:none}
+  .pc-controls .fg{min-width:100px}
+  .pc-tw-btn{padding:5px 8px;font-size:.68em}
+}
+.mobile-nav{display:none;position:fixed;bottom:0;left:0;right:0;height:54px;
+  background:var(--s1);border-top:1px solid var(--b1);z-index:100;
+  font-family:'DM Mono',monospace}
+.mnav-btn{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:2px;font-size:.6em;letter-spacing:.5px;text-transform:uppercase;color:var(--mut);
+  background:none;border:none;cursor:pointer;padding:4px 0;transition:color .15s}
+.mnav-btn.active{color:var(--acc)}
+.mnav-icon{font-size:1.4em;line-height:1}
 .sb{background:var(--s2);border:1px solid var(--b1);border-radius:2px;padding:10px 12px}
 .sl{font-family:'DM Mono',monospace;font-size:.6em;color:var(--mut);margin-bottom:2px}
 .sv{font-family:'Bebas Neue',sans-serif;font-size:1.6em;color:var(--acc)}
@@ -737,6 +798,22 @@ input[type=range]{padding:0;height:3px;accent-color:var(--acc);cursor:pointer}
   <button class="tab" id="tab-prices" onclick="showTab('prices')">Hinnat</button>
   <button class="tab" id="tab-history" onclick="showTab('history')">Historia</button>
 </div>
+
+<!-- BOTTOM NAV (mobile) -->
+<nav class="mobile-nav" aria-label="Mobiilinavigaatio">
+  <button class="mnav-btn active" id="mnav-search" onclick="mobileTab('search')">
+    <span class="mnav-icon">⛽</span><span>Haku</span>
+  </button>
+  <button class="mnav-btn" id="mnav-map" onclick="mobileTab('map')">
+    <span class="mnav-icon">🗺</span><span>Kartta</span>
+  </button>
+  <button class="mnav-btn" id="mnav-prices" onclick="mobileTab('prices')">
+    <span class="mnav-icon">📊</span><span>Hinnat</span>
+  </button>
+  <button class="mnav-btn" id="mnav-history" onclick="mobileTab('history')">
+    <span class="mnav-icon">📈</span><span>Historia</span>
+  </button>
+</nav>
 
 <!-- SEARCH TAB -->
 <div class="tabpanel active" id="panel-search">
@@ -940,7 +1017,7 @@ input[type=range]{padding:0;height:3px;accent-color:var(--acc);cursor:pointer}
 
   </div><!-- /adv-panel -->
 
-  <div class="panel">
+  <div class="panel" id="log-panel">
     <div class="ph"><div class="dot y"></div><h2 id="t-log-panel">Loki</h2></div>
     <div class="pb" style="padding:8px">
       <div class="log" id="log"><span class="ok">Käynnistetty — avaa http://localhost:3001</span></div>
@@ -975,6 +1052,7 @@ input[type=range]{padding:0;height:3px;accent-color:var(--acc);cursor:pointer}
 
 <!-- HISTORY TAB -->
 <div class="tabpanel" id="panel-history">
+  <div id="server-stats" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px"></div>
   <div id="hist-content"></div>
 </div>
 
@@ -1272,6 +1350,19 @@ function showTab(tab) {
   document.getElementById('panel-'+tab).classList.add('active');
   if (tab === 'history') renderHistory();
   if (tab === 'prices') initPriceTab();
+}
+
+function mobileTab(tab) {
+  document.querySelectorAll('.mnav-btn').forEach(b=>b.classList.remove('active'));
+  const btn = document.getElementById('mnav-'+tab);
+  if (btn) btn.classList.add('active');
+  if (tab === 'map') {
+    showTab('search');
+    document.body.classList.add('mobile-map');
+  } else {
+    document.body.classList.remove('mobile-map');
+    showTab(tab);
+  }
 }
 
 // ═══════════════════════════════════════════════════
@@ -1983,9 +2074,27 @@ function redrawMap() {
 
 let chartInstance = null;
 
+async function loadServerStats() {
+  try {
+    const r = await fetch('/api/stats');
+    const d = await r.json();
+    if (!d.ok) return;
+    const el = document.getElementById('server-stats');
+    if (!el) return;
+    const fmt = ts => ts ? new Date(ts).toLocaleString('fi-FI',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '—';
+    el.innerHTML = [
+      \`<div class="pc-stat-box"><div class="pc-stat-label">Hakuja yhteensä</div><div class="pc-stat-val">\${d.fetchCount}</div><div class="pc-stat-unit">kpl</div></div>\`,
+      \`<div class="pc-stat-box"><div class="pc-stat-label">Historiapäiviä</div><div class="pc-stat-val">\${d.daysOfData}</div><div class="pc-stat-unit">pv</div></div>\`,
+      \`<div class="pc-stat-box"><div class="pc-stat-label">Asemia seurattu</div><div class="pc-stat-val">\${d.stationCount}</div><div class="pc-stat-unit">kpl</div></div>\`,
+      \`<div class="pc-stat-box"><div class="pc-stat-label">Viimeisin haku</div><div class="pc-stat-val" style="font-size:.85em">\${fmt(d.lastFetch)}</div><div class="pc-stat-unit">auto klo 8·15·20</div></div>\`,
+    ].join('');
+  } catch(e) {}
+}
+
 function renderHistory(){
   const hist = histLoad();
   const cont = document.getElementById('hist-content');
+  loadServerStats();
   if(!hist.length){
     cont.innerHTML='<div class="hist-empty">'+T('histEmpty')+'</div>';
     return;
