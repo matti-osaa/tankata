@@ -1761,7 +1761,7 @@ function renderResults(stations,{fillL,range,fuelKey}){
     const avgPriceForFormula=ST.stations.filter(x=>x[fuelKey]).reduce((a,x)=>a+x[fuelKey],0)/ST.stations.filter(x=>x[fuelKey]).length||s.price;
     const detourFormula=detourKm+' km × '+(fuelPer100/100*avgPriceForFormula).toFixed(3).replace('.',',')+' €/km'+(ST.dest?' (kiertotie)':' (menopaluu)');
 
-    list.innerHTML+='<div class="card '+cls+(isBest?' card-best-highlight':'')+'" onclick="nav('+s.lat+','+s.lng+')">'+
+    list.innerHTML+='<div class="card '+cls+(isBest?' card-best-highlight':'')+'">'+
       '<div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:start">'+
         '<div>'+
           '<div class="cn" style="'+(isBest?'font-size:1.05em':'')+'">'+
@@ -1782,7 +1782,7 @@ function renderResults(stations,{fillL,range,fuelKey}){
           '<div class="csav '+(s.net>0.1?'pos':s.net<-0.1?'neg':'neu')+'">'+T('net')+' '+(s.net>=0?'+':'')+fmt(s.net,2)+'€</div>'+
         '</div>'+
       '</div>'+
-      '<button class="det-btn" onclick="toggleDet(this)"><span class="det-lbl">Kululaskelma</span><span class="det-arr">▾</span></button>'+
+      '<div style="display:flex;gap:6px">'+'<button class="det-btn" style="flex:1" onclick="toggleDet(this)"><span class="det-lbl">Kululaskelma</span><span class="det-arr">▾</span></button>'+'<button class="det-btn" style="width:auto;padding:5px 12px;flex-shrink:0" onclick="nav('+s.lat+','+s.lng+')">Näytä reitti →</button>'+'</div>'+
       '<div class="cost-grid">'+
         '<div class="cost-box">'+
           '<div class="cost-lbl">'+T('tankCostLbl')+'</div>'+
