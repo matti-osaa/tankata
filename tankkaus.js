@@ -1745,7 +1745,7 @@ function renderResults(stations,{fillL,range,fuelKey}){
   document.getElementById('stats').innerHTML=
     sbox(T('cheapestLbl'),fmt(cheapest.price,3),'€/L · '+cheapest.brand)+
     sbox(T('optimalLbl'),fmt(best.price,3),'€/L · '+best.brand)+
-    sbox(T('savingLbl'),(best.net>=0?'+':'')+fmt(best.net,2),T('afterDetour'),best.net>0?'var(--good)':best.net<0?'var(--bad)':'var(--mut)');
+    sbox(T('savingLbl'),(best.net>=0?'+':'')+fmt(best.net,2),ST.dest?T('afterDetour'):'€ matkakulun jälkeen',best.net>0?'var(--good)':best.net<0?'var(--bad)':'var(--mut)');
 
   const list=document.getElementById('cards');list.innerHTML='';
   const N=Math.min(stations.length,12);
@@ -1759,7 +1759,7 @@ function renderResults(stations,{fillL,range,fuelKey}){
     const detourKm=ST.dest?s.extra.toFixed(1):(s.detour*2).toFixed(1);
     const fuelPer100=(+document.getElementById('cons').value||7.5);
     const avgPriceForFormula=ST.stations.filter(x=>x[fuelKey]).reduce((a,x)=>a+x[fuelKey],0)/ST.stations.filter(x=>x[fuelKey]).length||s.price;
-    const detourFormula=detourKm+' km × '+(fuelPer100/100*avgPriceForFormula).toFixed(3)+' €/km (ka-hinta)';
+    const detourFormula=detourKm+' km × '+(fuelPer100/100*avgPriceForFormula).toFixed(3).replace('.',',')+' €/km'+(ST.dest?' (kiertotie)':' (menopaluu)');
 
     list.innerHTML+='<div class="card '+cls+(isBest?' card-best-highlight':'')+'" onclick="nav('+s.lat+','+s.lng+')">'+
       '<div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:start">'+
@@ -1770,11 +1770,10 @@ function renderResults(stations,{fillL,range,fuelKey}){
           '</div>'+
           '<div style="font-size:.73em;color:var(--m2);margin-bottom:4px">'+((s.name||'').slice(0,55))+'</div>'+
           '<div class="cm">'+
-            '<span>· '+s.detour.toFixed(1)+' '+T('roadKm')+
-              (s.distSrc==='osrm'?'':' ('+T('estLabel')+')')+
-              (ST.dest?'':' · '+(s.detour*2).toFixed(1)+' '+T('roundTrip'))+
-            '</span>'+
-            '<span>· ~'+etaStr(ST.dest?s.extra:s.detour*2)+' '+T('extraTime')+'</span>'+
+            (ST.dest
+              ? '<span>· kiertotie '+s.extra.toFixed(1)+' km'+(s.distSrc==='osrm'?'':' ('+T('estLabel')+')')+'</span>'
+              : '<span>· '+s.detour.toFixed(1)+' km päässä'+(s.distSrc==='osrm'?'':' ('+T('estLabel')+')')+' · menopaluu '+(s.detour*2).toFixed(1)+' km</span>')+
+            '<span>· ~'+etaStr(ST.dest?s.extra:s.detour*2)+' '+(ST.dest?T('extraTime'):'ajoa')+'</span>'+
             '<span style="color:'+updColor(s,fuelKey)+'">· '+updAge(s,fuelKey)+'</span>'+
           '</div>'+
         '</div>'+
@@ -1791,7 +1790,7 @@ function renderResults(stations,{fillL,range,fuelKey}){
           '<div class="cost-formula">'+fuelFormula+'</div>'+
         '</div>'+
         '<div class="cost-box">'+
-          '<div class="cost-lbl">'+T('detourCostLbl')+'</div>'+
+          '<div class="cost-lbl">'+(ST.dest?T('detourCostLbl'):'Matkakulu')+'</div>'+
           '<div class="cost-val" style="color:var(--warn)">'+fmt(s.dCost,2)+'€</div>'+
           '<div class="cost-formula">'+detourFormula+'</div>'+
         '</div>'+
