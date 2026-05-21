@@ -698,7 +698,13 @@ input[type=range]{padding:0;height:3px;accent-color:var(--acc);cursor:pointer}
 /* ── COST BREAKDOWN ── */
 .brkd{margin-top:8px;font-family:'DM Mono',monospace;font-size:.67em;
   color:var(--m2);line-height:2;border-top:1px solid var(--b1);padding-top:6px}
-.cost-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:0}
+.cost-grid{display:none;grid-template-columns:1fr 1fr;gap:8px;margin-top:0}
+.cost-grid.det-open{display:grid}
+.det-btn{width:100%;margin-top:8px;padding:5px 10px;background:transparent;border:1px solid var(--b1);border-radius:2px;cursor:pointer;font-family:'DM Mono',monospace;font-size:.63em;letter-spacing:.8px;text-transform:uppercase;color:var(--mut);transition:all .15s;text-align:left;display:flex;justify-content:space-between;align-items:center}
+.det-btn:hover{border-color:var(--acc);color:var(--acc)}
+.det-btn.open{color:var(--acc);border-color:color-mix(in srgb,var(--acc) 40%,transparent)}
+.det-arr{transition:transform .2s;display:inline-block}
+.det-btn.open .det-arr{transform:rotate(180deg)}
 .cost-box{background:var(--bg);border:1px solid var(--b1);border-radius:2px;padding:8px 10px;text-align:center}
 .cost-lbl{font-family:'DM Mono',monospace;font-size:.6em;color:var(--mut);margin-bottom:2px}
 .cost-val{font-family:'Bebas Neue',sans-serif;font-size:1.3em}
@@ -1187,7 +1193,7 @@ const LANGS = {
     totalCostLbl:'Kokonaiskulu',tankCostLbl:'Tankkauskulu',detourCostLbl:'Kiertotiepolttoainekulu',netSavingLbl:'Nettosäästö',
     badgeOptimal:'OPTIMAALISIN',badgeGood:'HYVÄ',badgeMarg:'MARGINAALINEN',badgeBad:'EI KANNATA',
     crowKm:'km linnuntietä',roadKm:'km tieverkko',roundTrip:'edestakainen',extraTime:'lisäaikaa',estLabel:'arvio',
-    fillWord:'täytä',gross:'bruttosäästö',detour:'kiertotie',net:'netto',
+    fillWord:'täytä',gross:'bruttosäästö',detour:'kiertotie',net:'säästät',
     noStations:'Ei asemia — tarkista suodattimet tai laajenna hakua.',
     noData:'Ei dataa — onko palvelin käynnissä?',
     tabSearch:'Haku',tabHistory:'Hintakehitys',tabPrices:'Hinnat',
@@ -1737,9 +1743,9 @@ function renderResults(stations,{fillL,range,fuelKey}){
   document.getElementById('rSub').textContent=T('filling')+' '+fillL.toFixed(0)+'L '+fl+' · '+T('rangeWord')+' '+range.toFixed(0)+'km';
   // Näytä: halvin hinta, ka, max säästö — 3 tilaruutua
   document.getElementById('stats').innerHTML=
-    sbox(T('cheapestLbl'),cheapest.price.toFixed(3),'€/L · '+cheapest.brand)+
-    sbox(T('optimalLbl'),best.price.toFixed(3),'€/L · '+best.brand)+
-    sbox(T('savingLbl'),(best.net>=0?'+':'')+best.net.toFixed(2),T('afterDetour'),best.net>0?'var(--good)':best.net<0?'var(--bad)':'var(--mut)');
+    sbox(T('cheapestLbl'),fmt(cheapest.price,3),'€/L · '+cheapest.brand)+
+    sbox(T('optimalLbl'),fmt(best.price,3),'€/L · '+best.brand)+
+    sbox(T('savingLbl'),(best.net>=0?'+':'')+fmt(best.net,2),T('afterDetour'),best.net>0?'var(--good)':best.net<0?'var(--bad)':'var(--mut)');
 
   const list=document.getElementById('cards');list.innerHTML='';
   const N=Math.min(stations.length,12);
@@ -1749,7 +1755,7 @@ function renderResults(stations,{fillL,range,fuelKey}){
     const cls=isBest?'best':s.net<0?'lose':s.net<0.3?'marg':'';
     const badge=isBest?bk(T('badgeOptimal'),'g'):s.net<0?bk(T('badgeBad'),'r'):s.net<0.3?bk(T('badgeMarg'),'y'):bk(T('badgeGood'),'g');
     // Kaavat auki
-    const fuelFormula=s.price.toFixed(3)+' €/L × '+fillL.toFixed(0)+'L';
+    const fuelFormula=fmt(s.price,3)+' €/L × '+fillL.toFixed(0)+'L';
     const detourKm=ST.dest?s.extra.toFixed(1):(s.detour*2).toFixed(1);
     const fuelPer100=(+document.getElementById('cons').value||7.5);
     const avgPriceForFormula=ST.stations.filter(x=>x[fuelKey]).reduce((a,x)=>a+x[fuelKey],0)/ST.stations.filter(x=>x[fuelKey]).length||s.price;
@@ -1773,33 +1779,41 @@ function renderResults(stations,{fillL,range,fuelKey}){
           '</div>'+
         '</div>'+
         '<div style="text-align:right;min-width:80px">'+
-          '<div class="cp" style="color:'+(isBest?'var(--acc)':'var(--txt)')+'">'+s.price.toFixed(3)+'<span class="cu">€/L</span></div>'+
-          '<div class="csav '+(s.net>0.1?'pos':s.net<-0.1?'neg':'neu')+'">'+T('net')+' '+(s.net>=0?'+':'')+s.net.toFixed(2)+'€</div>'+
+          '<div class="cp" style="color:'+(isBest?'var(--acc)':'var(--txt)')+'">'+fmt(s.price,3)+'<span class="cu">€/L</span></div>'+
+          '<div class="csav '+(s.net>0.1?'pos':s.net<-0.1?'neg':'neu')+'">'+T('net')+' '+(s.net>=0?'+':'')+fmt(s.net,2)+'€</div>'+
         '</div>'+
       '</div>'+
-      '<div class="cost-grid" style="margin-top:10px">'+
+      '<button class="det-btn" onclick="toggleDet(this)"><span class="det-lbl">Kululaskelma</span><span class="det-arr">▾</span></button>'+
+      '<div class="cost-grid">'+
         '<div class="cost-box">'+
           '<div class="cost-lbl">'+T('tankCostLbl')+'</div>'+
-          '<div class="cost-val" style="color:var(--acc)">'+s.tankCost.toFixed(2)+'€</div>'+
+          '<div class="cost-val" style="color:var(--acc)">'+fmt(s.tankCost,2)+'€</div>'+
           '<div class="cost-formula">'+fuelFormula+'</div>'+
         '</div>'+
         '<div class="cost-box">'+
           '<div class="cost-lbl">'+T('detourCostLbl')+'</div>'+
-          '<div class="cost-val" style="color:var(--warn)">'+s.dCost.toFixed(2)+'€</div>'+
+          '<div class="cost-val" style="color:var(--warn)">'+fmt(s.dCost,2)+'€</div>'+
           '<div class="cost-formula">'+detourFormula+'</div>'+
         '</div>'+
         '<div class="cost-box" style="background:color-mix(in srgb,var(--acc) 8%,transparent);border-color:color-mix(in srgb,var(--acc) 30%,transparent)">'+
           '<div class="cost-lbl">'+T('totalCostLbl')+'</div>'+
-          '<div class="cost-val" style="color:var(--acc)">'+s.totalCost.toFixed(2)+'€</div>'+
+          '<div class="cost-val" style="color:var(--acc)">'+fmt(s.totalCost,2)+'€</div>'+
         '</div>'+
         '<div class="cost-box">'+
           '<div class="cost-lbl">'+T('netSavingLbl')+' vs. kallein</div>'+
-          '<div class="cost-val" style="color:'+(s.net>0?'var(--good)':s.net<0?'var(--bad)':'var(--mut)')+'">'+(s.net>=0?'+':'')+s.net.toFixed(2)+'€</div>'+
+          '<div class="cost-val" style="color:'+(s.net>0?'var(--good)':s.net<0?'var(--bad)':'var(--mut)')+'">'+(s.net>=0?'+':'')+fmt(s.net,2)+'€</div>'+
         '</div>'+
       '</div>'+
     '</div>';
   }
   if(stations.length>N)list.innerHTML+='<div style="text-align:center;font-family:DM Mono,monospace;font-size:.67em;color:var(--mut);padding:10px">+'+(stations.length-N)+' muuta</div>';
+}
+const fmt=(n,d)=>typeof n==='number'?n.toLocaleString('fi-FI',{minimumFractionDigits:d,maximumFractionDigits:d}):n;
+function toggleDet(btn){
+  const g=btn.closest('.card').querySelector('.cost-grid');
+  g.classList.toggle('det-open');
+  btn.classList.toggle('open');
+  btn.querySelector('.det-lbl').textContent=g.classList.contains('det-open')?'Piilota':'Kululaskelma';
 }
 function sbox(lbl,val,unit,color){return'<div class="sb"><div class="sl">'+lbl+'</div><div class="sv"'+(color?' style="color:'+color+'"':'')+'>'+val+'</div><div class="su">'+unit+'</div></div>';}
 function bk(t,c){return'<span class="bk '+c+'">'+t+'</span>';}
@@ -2199,7 +2213,7 @@ function renderHistory(){
       plugins:{legend:{labels:{color:textColor,font:{family:'DM Mono, monospace',size:11}}}},
       scales:{
         x:{type:'linear',ticks:{color:textColor,font:{family:'DM Mono, monospace',size:10},callback:v=>fmt(v)},grid:{color:gridColor}},
-        y:{ticks:{color:textColor,font:{family:'DM Mono, monospace',size:10},callback:v=>v.toFixed(3)+'€'},grid:{color:gridColor}},
+        y:{ticks:{color:textColor,font:{family:'DM Mono, monospace',size:10},callback:v=>v.toFixed(3).replace('.',',')+'€'},grid:{color:gridColor}},
       },
     },
   });
@@ -2349,10 +2363,10 @@ function renderPriceChart() {
         responsive: true, indexAxis: 'x',
         plugins: {
           legend: { display: false },
-          tooltip: { callbacks: { label: c => c.parsed.y.toFixed(3) + ' €/L' } },
+          tooltip: { callbacks: { label: c => fmt(c.parsed.y,3) + ' €/L' } },
         },
         scales: {
-          y: { ticks: { color: textColor, callback: v => v.toFixed(3)+'€' }, grid: { color: gridColor } },
+          y: { ticks: { color: textColor, callback: v => v.toFixed(3).replace('.',',')+'€' }, grid: { color: gridColor } },
           x: { ticks: { color: textColor, font: { size: 13, weight: '600' } }, grid: { display: false } },
         },
       },
@@ -2415,10 +2429,10 @@ function renderPriceChart() {
         responsive: true,
         plugins: {
           legend: { labels: { color: textColor, font: { family: 'DM Mono, monospace', size: 11 } } },
-          tooltip: { callbacks: { label: c => c.dataset.label + ': ' + (c.parsed.y||0).toFixed(3) + ' €/L' } },
+          tooltip: { callbacks: { label: c => c.dataset.label + ': ' + fmt(c.parsed.y||0,3) + ' €/L' } },
         },
         scales: {
-          y: { ticks: { color: textColor, callback: v => v.toFixed(3)+'€' }, grid: { color: gridColor } },
+          y: { ticks: { color: textColor, callback: v => v.toFixed(3).replace('.',',')+'€' }, grid: { color: gridColor } },
           x: { ticks: { color: textColor, font: { size: 10 }, maxRotation: 45 }, grid: { display: false } },
         },
       },
@@ -2476,7 +2490,7 @@ function renderPriceChart() {
       scales: {
         y: {
           min: Math.max(0, minP - 0.015),
-          ticks: { color: textColor, callback: v => v.toFixed(3)+'€' },
+          ticks: { color: textColor, callback: v => v.toFixed(3).replace('.',',')+'€' },
           grid: { color: gridColor },
         },
         x: {
@@ -2611,12 +2625,12 @@ function renderHistoryChart(rows, label) {
       responsive: true,
       plugins: {
         legend: { labels: { color: textColor, font: { family: 'DM Mono, monospace', size: 11 } } },
-        tooltip: { callbacks: { label: c => c.dataset.label + ': ' + (c.parsed.y||0).toFixed(3) + ' €/L' } },
+        tooltip: { callbacks: { label: c => c.dataset.label + ': ' + fmt(c.parsed.y||0,3) + ' €/L' } },
       },
       scales: {
         x: { ticks: { color: textColor, font: { size: 10 }, maxRotation: 45, maxTicksLimit: 12 },
              grid: { color: gridColor } },
-        y: { ticks: { color: textColor, callback: v => v.toFixed(3)+'€' }, grid: { color: gridColor } },
+        y: { ticks: { color: textColor, callback: v => v.toFixed(3).replace('.',',')+'€' }, grid: { color: gridColor } },
       },
     },
   });
