@@ -2315,9 +2315,6 @@ function renderPriceChart() {
       },
     });
     renderPcStats(pool, fk||'p95');
-    // Lataa myös alue-historia jos alue on valittu
-    const regVal = document.getElementById('pc-region').value;
-    if (regVal) loadRegionHistory(regVal);
     return;
   }
 
