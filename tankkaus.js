@@ -412,11 +412,23 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(200);
         res.end(JSON.stringify({ ok: true, city, days, rows }));
       } else if (region) {
-        // Alue — haetaan kaupungit REGIONS-objektista (kovakoodattu lista)
-        // Palvelimella ei ole REGIONS-objektia, käytetään client-puolen listaa
-        // Sen sijaan palautetaan kaikki asemat alueelta (client suodattaa)
-        res.writeHead(400);
-        res.end(JSON.stringify({ ok: false, error: 'Käytä city-parametria tai hae id per asema' }));
+        // Alue — aggregoi päiväkeskiarvot kaikista alueen kaupungeista
+        const cities = REGIONS[region];
+        if (!cities || !cities.length) {
+          res.writeHead(400);
+          res.end(JSON.stringify({ ok: false, error: 'Tuntematon alue: ' + region }));
+          return;
+        }
+        const placeholders = cities.map(() => '?').join(',');
+        rows = db.prepare(`
+          SELECT date(ts/1000,'unixepoch') as d,
+                 AVG(p95) as p95, AVG(p98) as p98, AVG(diesel) as diesel,
+                 COUNT(*) as n
+          FROM prices WHERE city IN (${placeholders}) AND ts>=?
+          GROUP BY d ORDER BY d
+        `).all(...cities, since);
+        res.writeHead(200);
+        res.end(JSON.stringify({ ok: true, region, days, rows }));
       } else {
         res.writeHead(400);
         res.end(JSON.stringify({ ok: false, error: 'Anna id tai city' }));
@@ -989,7 +1001,7 @@ input[type=range]{padding:0;height:3px;accent-color:var(--acc);cursor:pointer}
     </div>
     <div class="fg" id="pc-region-wrap">
       <label>Alue</label>
-      <select id="pc-region" onchange="renderPriceChart()">
+      <select id="pc-region" onchange="renderPriceChart();if(document.getElementById('pc-view').value==='region'&&this.value)loadRegionHistory(this.value)">
         <option value="">— kaikki —</option>
         <option value="PK-Seutu">PK-Seutu</option>
         <option value="Turun_seutu">Turun seutu</option>
@@ -1788,7 +1800,7 @@ function drawMap(origin, dest, stations, forceZoom, panX, panY){
   // Load and draw OSM tiles
   // Use both light and dark-friendly tile servers
   const tileUrl = isDark
-    ? (z,x,y) => \`https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/\${z}/\${x}/\${y}.png\`
+    ? (z,x,y) => \`https://a.basemaps.cartocdn.com/dark_all/\${z}/\${x}/\${y}.png\`
     : (z,x,y) => \`https://tile.openstreetmap.org/\${z}/\${x}/\${y}.png\`;
 
   let tilesLoaded=0, tilesTotal=0;
@@ -2121,7 +2133,7 @@ function onPcViewChange() {
   if (v !== 'station') document.getElementById('pc-station-list').style.display = 'none';
   // Piilota historia-kaavio ja aikaikkunavalitsin kun vaihdetaan pois
   document.getElementById('pc-hist-wrap').style.display     = 'none';
-  document.getElementById('pc-timewin-wrap').style.display  = (v === 'city' || v === 'station') ? '' : 'none';
+  document.getElementById('pc-timewin-wrap').style.display  = (v === 'city' || v === 'station' || v === 'region') ? '' : 'none';
   if (pcHistChartInst) { pcHistChartInst.destroy(); pcHistChartInst = null; }
   pcSelectedStation = null;
   renderPriceChart();
@@ -2129,6 +2141,11 @@ function onPcViewChange() {
   if (v === 'city') {
     const city = (document.getElementById('pc-city').value || '').trim();
     if (city) loadCityHistory(city);
+  }
+  // Alue-näkymässä ladataan historia heti jos alue on valittu
+  if (v === 'region') {
+    const reg = (document.getElementById('pc-region').value || '').trim();
+    if (reg) loadRegionHistory(reg);
   }
 }
 
@@ -2298,6 +2315,9 @@ function renderPriceChart() {
       },
     });
     renderPcStats(pool, fk||'p95');
+    // Lataa myös alue-historia jos alue on valittu
+    const regVal = document.getElementById('pc-region').value;
+    if (regVal) loadRegionHistory(regVal);
     return;
   }
 
@@ -2373,12 +2393,15 @@ function setPcTimeWin(days) {
   document.querySelectorAll('.pc-tw-btn').forEach(b => {
     b.classList.toggle('active', +b.dataset.days === days);
   });
-  // Päivitä historia jos asema tai kaupunki valittu
+  // Päivitä historia jos asema, kaupunki tai alue valittu
   const view = document.getElementById('pc-view').value;
   if (view === 'station' && pcSelectedStation) loadStationHistory(pcSelectedStation);
   else if (view === 'city') {
     const city = (document.getElementById('pc-city').value || '').trim();
     if (city) loadCityHistory(city);
+  } else if (view === 'region') {
+    const reg = (document.getElementById('pc-region').value || '').trim();
+    if (reg) loadRegionHistory(reg);
   }
 }
 
@@ -2422,6 +2445,29 @@ async function loadCityHistory(city) {
       return;
     }
     renderHistoryChart(d.rows, city);
+  } catch(e) {
+    title.textContent = 'Historia ei saatavilla: ' + e.message;
+  }
+}
+
+// Lataa alueen päiväkeskiarvot palvelimelta
+async function loadRegionHistory(regionKey) {
+  const days = pcHistDays || 3650;
+  const wrap = document.getElementById('pc-hist-wrap');
+  const title = document.getElementById('pc-hist-title');
+  const regionLabel = regionKey.replace(/_/g, ' ');
+  title.textContent = \`\${regionLabel} — hintakehitys (päiväkeskiarvo)\`;
+  wrap.style.display = '';
+
+  try {
+    const r = await fetch(\`/api/history?region=\${encodeURIComponent(regionKey)}&days=\${days}\`, {cache:'no-store'});
+    const d = await r.json();
+    if (!d.ok || !d.rows?.length) {
+      title.textContent = \`\${regionLabel} — ei historiadataa vielä\`;
+      if(pcHistChartInst){pcHistChartInst.destroy();pcHistChartInst=null;}
+      return;
+    }
+    renderHistoryChart(d.rows, regionLabel);
   } catch(e) {
     title.textContent = 'Historia ei saatavilla: ' + e.message;
   }
