@@ -796,7 +796,7 @@ input[type=range]{padding:0;height:3px;accent-color:var(--acc);cursor:pointer}
 <div class="tabs">
   <button class="tab active" id="tab-search" onclick="showTab('search')">Haku</button>
   <button class="tab" id="tab-prices" onclick="showTab('prices')">Hinnat</button>
-  <button class="tab" id="tab-history" onclick="showTab('history')">Historia</button>
+  <button class="tab" id="tab-history" onclick="showTab('history')">Hintakehitys</button>
 </div>
 
 <!-- BOTTOM NAV (mobile) -->
@@ -811,7 +811,7 @@ input[type=range]{padding:0;height:3px;accent-color:var(--acc);cursor:pointer}
     <span class="mnav-icon">📊</span><span>Hinnat</span>
   </button>
   <button class="mnav-btn" id="mnav-history" onclick="mobileTab('history')">
-    <span class="mnav-icon">📈</span><span>Historia</span>
+    <span class="mnav-icon">📈</span><span>Hintakehitys</span>
   </button>
 </nav>
 
@@ -1190,7 +1190,7 @@ const LANGS = {
     fillWord:'täytä',gross:'bruttosäästö',detour:'kiertotie',net:'netto',
     noStations:'Ei asemia — tarkista suodattimet tai laajenna hakua.',
     noData:'Ei dataa — onko palvelin käynnissä?',
-    tabSearch:'Haku',tabHistory:'Historia',tabPrices:'Hinnat',
+    tabSearch:'Haku',tabHistory:'Hintakehitys',tabPrices:'Hinnat',
     pcCurve:'Hintakäyrä — kaikki asemat',pcRegion:'Alueittain',pcCity:'Kaupungissa',pcStation:'Asemahaku',
     pcFuelLbl:'Polttoaine',pcViewLbl:'Näytä',pcAllFuels:'Kaikki laadut',
     pcMin:'Halvin',pcMax:'Kallein',pcAvg:'Keskiarvo',pcSpread:'Hajonta',
