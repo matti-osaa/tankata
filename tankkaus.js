@@ -15,10 +15,14 @@ const PORT   = process.env.PORT || 3001;
 
 // ─── SQLite — hintahistoria ───────────────────────────────────────────────────
 // node:sqlite on sisäänrakennettu Node 22:ssa, ei npm-paketteja
+//
+// DB_PATH env-muuttuja ohittaa oletuspolun — käytä Railwayssa esim. /data/prices.db
+// (Railway Volume mountattuna /data:han) jotta historia säilyy deployssa.
 let db = null;
 try {
   const { DatabaseSync } = require('node:sqlite');
-  const dbPath = path.join(__dirname, 'prices.db');
+  const dbPath = process.env.DB_PATH || path.join(__dirname, 'prices.db');
+  console.log('  SQLite-polku: ' + dbPath);
   db = new DatabaseSync(dbPath);
   db.exec(`
     CREATE TABLE IF NOT EXISTS prices (
@@ -476,25 +480,45 @@ server.listen(PORT, () => {
   console.log('  ⛽  TANKKAUS käynnissä');
   console.log(`  →  ${url}`);
   console.log('');
-  console.log('  Avataan selain automaattisesti...');
-  console.log('  Sulje painamalla Ctrl+C');
-  console.log('');
-  // Auto-open browser after short delay so server is ready
-  setTimeout(() => openBrowser(url), 500);
+  // Skipataan selaimen avaus jos pyöritään Railwayssa (tai muussa pilvessä)
+  const isCloud = !!(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID || process.env.NODE_ENV === 'production');
+  if (!isCloud) {
+    console.log('  Avataan selain automaattisesti...');
+    console.log('  Sulje painamalla Ctrl+C');
+    console.log('');
+    // Auto-open browser after short delay so server is ready
+    setTimeout(() => openBrowser(url), 500);
+  } else {
+    console.log('  Pilviympäristö havaittu — selainta ei avata.');
+    console.log('');
+  }
 
-  // ── Ajastettu taustahaku klo 8, 15 ja 20 ──────────────────────────────────
+  // ── Ajastettu taustahaku kerran päivässä klo 8:00 Suomen aikaa ────────────
+  // Käyttää Intl.DateTimeFormat:ia jotta toimii myös UTC-kontainerissa
+  // (Railway oletuksena UTC) ilman että TZ-envia tarvitsee asettaa.
+  function helsinkiHourMin(date) {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/Helsinki',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    }).formatToParts(date);
+    const h = parseInt(parts.find(p => p.type === 'hour').value, 10);
+    const m = parseInt(parts.find(p => p.type === 'minute').value, 10);
+    return { h, m };
+  }
   function scheduleNextFetch() {
-    const now     = new Date();
-    const hh      = now.getHours();
-    const targets = [8, 15, 20];
-    let next      = targets.find(h => h > hh);
-    const nextDate = new Date(now);
-    if (next == null) { next = targets[0]; nextDate.setDate(nextDate.getDate() + 1); }
-    nextDate.setHours(next, 0, 5, 0);
-    const ms = nextDate - now;
-    console.log('  ⏰ Seuraava taustahaku: ' + nextDate.toLocaleTimeString('fi-FI') + ' (' + Math.round(ms/60000) + ' min paasta)');
+    const TARGET_HOUR = 8; // klo 8 Suomen aikaa
+    const now = new Date();
+    const { h, m } = helsinkiHourMin(now);
+    const nowMins    = h * 60 + m;
+    const targetMins = TARGET_HOUR * 60;
+    let delta = targetMins - nowMins;
+    if (delta <= 0) delta += 24 * 60; // mennyt jo tänään → huominen
+    const ms = delta * 60 * 1000 + 5000; // +5s puskuri
+    const nextDate = new Date(now.getTime() + ms);
+    const helsinkiStr = nextDate.toLocaleString('fi-FI', { timeZone: 'Europe/Helsinki' });
+    console.log('  ⏰ Seuraava taustahaku: ' + helsinkiStr + ' (Suomen aikaa, ~' + Math.round(ms/60000) + ' min päästä)');
     setTimeout(async () => {
-      console.log('  ⏰ Taustahaku kaynnistyy klo ' + new Date().getHours() + ':00...');
+      console.log('  ⏰ Taustahaku käynnistyy (klo ~' + TARGET_HOUR + ':00 Suomen aikaa)...');
       try { await fetchAllStations(); } catch(e) { console.error('  ✗ Taustahaku epaonnistui:', e.message); }
       scheduleNextFetch();
     }, ms);
