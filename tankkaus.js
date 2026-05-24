@@ -37,8 +37,9 @@ try {
       diesel  REAL,
       PRIMARY KEY (id, ts)
     );
-    CREATE INDEX IF NOT EXISTS idx_id_ts ON prices (id, ts);
-    CREATE INDEX IF NOT EXISTS idx_ts    ON prices (ts);
+    CREATE INDEX IF NOT EXISTS idx_id_ts   ON prices (id, ts);
+    CREATE INDEX IF NOT EXISTS idx_ts      ON prices (ts);
+    CREATE INDEX IF NOT EXISTS idx_city_ts ON prices (city, ts);
     CREATE TABLE IF NOT EXISTS snap_log (
       date TEXT PRIMARY KEY
     );
@@ -200,7 +201,7 @@ const REGIONS = {
 
 // ─── XML API scraper ──────────────────────────────────────────────────────────
 // Single call to polttoaine.net/api/ fetches all ~350 stations with real lat/lng.
-// Results are cached for 5 minutes to avoid hammering the API.
+// Results are cached in-memory for 30 minutes to avoid hammering the API.
 let xmlCache = null;
 let xmlCacheTime = 0;
 const CACHE_TTL = 30 * 60 * 1000; // 30 minuuttia — hinnat päivittyvät harvoin
@@ -247,6 +248,8 @@ function parseStations(xml) {
       if (type === '98E5')   { fuels.p98    = price; fuelUpdated.p98    = updStr; }
       if (type === 'diesel') { fuels.diesel = price; fuelUpdated.diesel = updStr; }
     }
+    // Skipataan asema jos kaikki hinnat ovat null (kaikki rivit > 3pv vanhoja)
+    if (!fuels.p95 && !fuels.p98 && !fuels.diesel) continue;
     const chain = tag('chain');
     stations.push({
       source: 'polttoaine',
@@ -464,9 +467,25 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ── /api/health ───────────────────────────────────────────────────────────
+  // Palauttaa 503 jos viimeisin taustahaku on > 25h vanha — uptime-monitoreille.
+  // Jos SQLite ei ole käytössä, ei voida varmistaa hakua → palauttaa 200 (degraded).
   if (p === '/api/health') {
-    res.writeHead(200);
-    res.end(JSON.stringify({ ok: true, port: PORT, time: new Date().toISOString() }));
+    let lastFetch = null, ageH = null, ok = true;
+    if (db) {
+      try {
+        lastFetch = db.prepare('SELECT MAX(ts) as t FROM fetch_log').get()?.t || null;
+        ageH = lastFetch ? +((Date.now() - lastFetch) / 3600000).toFixed(1) : null;
+        // Vasta kun on edes yksi haku tehty, valvotaan tuoreutta
+        if (ageH != null && ageH > 25) ok = false;
+      } catch(_) {}
+    }
+    res.writeHead(ok ? 200 : 503);
+    res.end(JSON.stringify({
+      ok, port: PORT, time: new Date().toISOString(),
+      lastFetch: lastFetch ? new Date(lastFetch).toISOString() : null,
+      lastFetchAgeHours: ageH,
+      dbEnabled: !!db,
+    }));
     return;
   }
 
@@ -532,6 +551,20 @@ server.listen(PORT, () => {
     console.error(err);
   }
 });
+
+// ─── Graceful shutdown — sulkee db:n ja serverin siististi (Railway SIGTERM) ─
+let shuttingDown = false;
+function shutdown(sig) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`\n  ${sig} vastaanotettu — suljetaan siististi...`);
+  const done = () => { try { db?.close(); } catch(_){} process.exit(0); };
+  // Anna serverille max 5s ehtiä sulkea olemassa olevat yhteydet
+  const force = setTimeout(() => { console.log('  Pakotetaan sulku.'); done(); }, 5000);
+  server.close(() => { clearTimeout(force); done(); });
+}
+process.on('SIGINT',  () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 // ─── Embedded HTML app ────────────────────────────────────────────────────────
 // Fetches from /api/prices on the same origin — no CORS, no proxy needed.
